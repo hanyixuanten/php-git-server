@@ -1,7 +1,10 @@
 <?php
 
 /* Base URL path of this app. Use an empty string when deployed at / . */
-$url_base = '/php-git-server';
+
+# $url_base = '/php-git-server';
+$url_base = '';
+
 
 /* Git executable used by Smart HTTP clone, pull and push. */
 $git_executable = 'git';
@@ -13,7 +16,7 @@ $git_executable = 'git';
  * Set this to array() to disable repository creation.
  */
 $managed_repositories = array(
-    'path' => '/srv/git',
+    'path' => './repos',
     'require_auth' => TRUE,
     /* Uncomment when TLS ends at a trusted reverse proxy. */
     // 'session_cookie_secure' => TRUE,
@@ -41,7 +44,7 @@ $repos = array(
     array('/php-git-server.git', '.git', array(
         'read' => TRUE,
         'push' => FALSE)),
-    array('/wiki.git', '/srv/git/wiki.git', array(
+    array('/wiki.git', './repos/wiki.git', array(
         'read' => TRUE,
         'push' => TRUE,
         'require_auth' => TRUE,
