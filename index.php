@@ -33,10 +33,7 @@ function home_escape($value) {
 }
 
 function home_managed_repositories_configured($configuration) {
-    return is_array($configuration)
-        && isset($configuration['path'])
-        && is_string($configuration['path'])
-        && $configuration['path'] !== '';
+    return is_array($configuration) && !empty($configuration);
 }
 
 function home_creation_requires_auth($configuration) {

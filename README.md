@@ -57,13 +57,12 @@ $repos = array(
 Apache or reverse-proxy configuration. Setting it to `FALSE` permits anonymous
 push and is suitable only for isolated development environments.
 
-To create bare repositories from the home page, configure a pre-existing
-writable directory. Newly created repositories are discovered automatically;
-the application never rewrites `config.php`:
+To create bare repositories from the home page, enable managed repositories.
+They are always stored in the application's `repos` directory and discovered
+automatically; this path cannot be changed in `config.php`:
 
 ```php
 $managed_repositories = array(
-    'path' => '/srv/git',
     'require_auth' => TRUE,
     'session_cookie_secure' => TRUE,
     'options' => array(
@@ -72,10 +71,12 @@ $managed_repositories = array(
         'require_auth' => TRUE));
 ```
 
-The managed directory must be readable, writable and searchable by PHP and
-reserved for this application. Set `session_cookie_secure` to `TRUE` when HTTPS
-terminates at a trusted reverse proxy; direct HTTPS deployments are detected
-from the web-server connection automatically.
+The `repos` directory is created automatically when missing. Its parent must be
+writable for that first creation, and the resulting directory must be readable,
+writable and searchable by PHP and reserved for this application. Set
+`session_cookie_secure` to `TRUE` when HTTPS terminates at a trusted reverse
+proxy; direct HTTPS deployments are detected from the web-server connection
+automatically.
 
 See `usage.md` for complete Chinese installation, configuration, operation and
 security instructions.

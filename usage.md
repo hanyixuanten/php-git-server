@@ -98,7 +98,6 @@ $url_base = '/php-git-server';
 $git_executable = 'git';
 
 $managed_repositories = array(
-    'path' => '/srv/git',
     'require_auth' => TRUE,
     'session_cookie_secure' => TRUE,
     'options' => array(
@@ -154,11 +153,10 @@ array('/self.git', '.git')
 
 ### 从主界面创建仓库
 
-`$managed_repositories` 用于启用主界面的创建入口。其 `path` 必须是已经存在、由 PHP/Web 服务器进程可读、可写且可进入的目录，并应由本应用独占；应用只会发现该目录直属的、名称以 `.git` 结尾的 bare 仓库，不递归扫描，也不会改写 `config.php`。
+`$managed_repositories` 用于启用主界面的创建入口。托管目录固定为本项目下的 `repos` 文件夹，不能通过 `config.php` 修改。目录不存在时应用会自动创建，此时 PHP/Web 服务器进程必须能写入项目根目录；创建后的目录必须可读、可写且可进入，并应由本应用独占。应用只会发现该目录直属的、名称以 `.git` 结尾的 bare 仓库，不递归扫描。
 
 ```php
 $managed_repositories = array(
-    'path' => '/srv/git',
     'require_auth' => TRUE,
     'session_cookie_secure' => TRUE,
     'options' => array(
@@ -244,20 +242,20 @@ push 请求会先写入系统临时目录，以便在交给 `git-receive-pack` �
 git init --bare /srv/git/project.git
 ```
 
-启用主界面创建时，应先创建并授权整个托管目录，例如：
+启用主界面创建后，缺失的 `repos` 目录会自动创建。生产环境可预先创建并授权该目录，以明确设置属主和权限，例如：
 
 ```sh
-sudo install -d -o git -g www-data -m 2770 /srv/git
+sudo install -d -o git -g www-data -m 2770 /var/www/php-git-server/repos
 ```
 
-这里的用户和组只是示例，应按 PHP/Web 服务器的实际运行身份调整。
+这里的项目路径、用户和组只是示例，应按实际部署位置以及 PHP/Web 服务器的运行身份调整。托管目录必须是项目根目录下的 `repos`。
 
 只读仓库只需要让 Apache/PHP 用户可读取目录和文件。启用 push 时，运行 PHP 的用户必须能够创建和修改 objects、refs、日志及锁文件。例如可把仓库交给专用组管理：
 
 ```sh
-sudo chown -R git:www-data /srv/git/project.git
-sudo find /srv/git/project.git -type d -exec chmod 2770 {} \;
-sudo find /srv/git/project.git -type f -exec chmod 660 {} \;
+sudo chown -R git:www-data /var/www/php-git-server/repos/project.git
+sudo find /var/www/php-git-server/repos/project.git -type d -exec chmod 2770 {} \;
+sudo find /var/www/php-git-server/repos/project.git -type f -exec chmod 660 {} \;
 ```
 
 权限策略应根据服务器实际用户、组和备份方案调整。不要使用 `chmod -R 777`。

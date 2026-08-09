@@ -12,13 +12,12 @@ $url_base = '';
 $git_executable = 'git';
 
 /*
- * Optional directory for repositories created from the home page.
- * The directory must already exist and be readable, writable and searchable by
- * the PHP process, and should be reserved for this application.
+ * Optional settings for repositories created from the home page.
+ * Repositories are always stored in this application's repos directory. It is
+ * created when missing and must be writable and searchable by the PHP process.
  * Set this to array() to disable repository creation.
  */
 $managed_repositories = array(
-    'path' => './repos',
     'require_auth' => TRUE,
     /* Uncomment when TLS ends at a trusted reverse proxy. */
     // 'session_cookie_secure' => TRUE,
@@ -52,11 +51,4 @@ $repos = array(
     array('/php-git-server.git', '.git', array(
         'read' => TRUE,
         'push' => FALSE)),
-    array('/wiki.git', './repos/wiki.git', array(
-        'read' => TRUE,
-        'push' => TRUE,
-        'require_auth' => TRUE,
-        'branches' => TRUE,
-        'tags' => TRUE,
-        'other_refs' => FALSE,
-        'max_request_bytes' => 0)));
+    );

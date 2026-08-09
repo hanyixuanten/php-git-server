@@ -28,20 +28,26 @@ function repository_default_options() {
 }
 
 function managed_repository_root($configuration) {
-    if (!is_array($configuration)
-        || !isset($configuration['path'])
-        || !is_string($configuration['path'])
-        || $configuration['path'] === '') {
+    if (!is_array($configuration) || empty($configuration)) {
         return FALSE;
     }
 
-    $path = $configuration['path'];
-    if ($path[0] !== DIRECTORY_SEPARATOR) {
-        $path = dirname(__DIR__).DIRECTORY_SEPARATOR.$path;
+    $application_root = realpath(dirname(__DIR__));
+    if ($application_root === FALSE) {
+        return FALSE;
+    }
+
+    $path = $application_root.DIRECTORY_SEPARATOR.'repos';
+    if (!file_exists($path) && !is_link($path)
+        && !@mkdir($path, 0777) && !is_dir($path)) {
+        return FALSE;
+    }
+    if (is_link($path)) {
+        return FALSE;
     }
 
     $root = realpath($path);
-    return $root !== FALSE && is_dir($root) ? $root : FALSE;
+    return $root === $path && is_dir($root) ? $root : FALSE;
 }
 
 function normalize_managed_repository_name($value) {
