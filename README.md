@@ -8,6 +8,8 @@ This project serves configured Git repositories through PHP. It supports:
 - Smart HTTP `upload-pack` for clone, fetch and pull.
 - Smart HTTP `receive-pack` for push.
 - Remote branch and tag creation, update and deletion through push.
+- MySQL-backed account registration and login.
+- Hashed, revocable access tokens for authenticated Git pushes.
 - Authenticated bare-repository creation from the home page.
 - Per-repository controls for reads, pushes, authentication, branch refs,
   tag refs, other ref namespaces and push request size.
@@ -22,6 +24,8 @@ Requirements
 
 - PHP 7.4 or newer.
 - Apache with `mod_rewrite` and `.htaccess` enabled for normal deployment.
+- MySQL 5.7+/MariaDB 10.2+ and PHP PDO MySQL (`pdo_mysql`) when account
+    authentication is enabled.
 - PHP zlib and hash extensions for the native Git protocol implementation.
 - Git and PHP `proc_open` are optional; when available, Git remains the Smart
     HTTP backend for full protocol and hook compatibility.
@@ -38,9 +42,9 @@ web-server authentication.
 Configuration
 -------------
 
-Copy `config.php.sample` to `config.php`, then configure `$url_base`,
-`$git_executable`, `$repos` and optionally `$managed_repositories`. A writable
-repository can be configured as:
+Copy `config.php.sample` to `config.php`, import `schema.mysql.sql`, then
+configure `$url_base`, `$git_executable`, `$auth`, `$repos` and optionally
+`$managed_repositories`. A writable repository can be configured as:
 
 ```php
 $repos = array(
@@ -53,9 +57,11 @@ $repos = array(
         'other_refs' => FALSE)));
 ```
 
-`require_auth` trusts only `REMOTE_USER`, which must be set by authenticated
-Apache or reverse-proxy configuration. Setting it to `FALSE` permits anonymous
-push and is suitable only for isolated development environments.
+With `require_auth` enabled, Git uses HTTP Basic authentication: enter the
+registered username as the username and an access token as the password. The
+application stores password hashes and token SHA-256 digests in MySQL; token
+plaintext is shown only once. Setting `require_auth` to `FALSE` permits
+anonymous push and is suitable only for isolated development environments.
 
 To create bare repositories from the home page, enable managed repositories.
 They are always stored in the application's `repos` directory and discovered
@@ -64,19 +70,19 @@ automatically; this path cannot be changed in `config.php`:
 ```php
 $managed_repositories = array(
     'require_auth' => TRUE,
-    'session_cookie_secure' => TRUE,
     'options' => array(
         'read' => TRUE,
         'push' => TRUE,
         'require_auth' => TRUE));
 ```
 
+The home page uses the logged-in application session for repository creation.
 The `repos` directory is created automatically when missing. Its parent must be
 writable for that first creation, and the resulting directory must be readable,
 writable and searchable by PHP and reserved for this application. Set
-`session_cookie_secure` to `TRUE` when HTTPS terminates at a trusted reverse
-proxy; direct HTTPS deployments are detected from the web-server connection
-automatically.
+`$auth['session_cookie_secure']` to `TRUE` when HTTPS terminates at a trusted
+reverse proxy; direct HTTPS deployments are detected from the web-server
+connection automatically.
 
 See `usage.md` for complete Chinese installation, configuration, operation and
 security instructions.

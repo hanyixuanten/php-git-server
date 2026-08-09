@@ -18,7 +18,7 @@ function create_http_request($url_path, $repository) {
         'content_length' => get_request_header('Content-Length'),
         'content_encoding' => get_request_header('Content-Encoding'),
         'git_protocol' => get_request_header('Git-Protocol'),
-        'user' => get_authenticated_user());
+        'user' => get_access_token_user());
 }
 
 function request_has_service($request, $service) {

@@ -2,6 +2,7 @@
 
 require(__DIR__.'/config.php');
 require(__DIR__.'/lib/http.php');
+require(__DIR__.'/lib/auth.php');
 require(__DIR__.'/lib/repository.php');
 require(__DIR__.'/lib/router.php');
 require(__DIR__.'/lib/git_protocol.php');
@@ -55,6 +56,9 @@ function home_session_cookie_is_secure($configuration) {
 }
 
 function home_start_session($url_base, $configuration) {
+    if (auth_is_enabled()) {
+        return auth_start_session();
+    }
     if (session_status() === PHP_SESSION_ACTIVE) {
         return TRUE;
     }
@@ -100,6 +104,123 @@ function home_take_notice($url_base, $configuration) {
     return is_array($notice) ? $notice : NULL;
 }
 
+function home_set_notice($url_base, $configuration, $type, $message, $token=NULL) {
+    if (!home_start_session($url_base, $configuration)) {
+        return FALSE;
+    }
+
+    $_SESSION['home_notice'] = array('type' => $type, 'message' => $message);
+    if ($token !== NULL) {
+        $_SESSION['home_notice']['token'] = $token;
+    }
+    return TRUE;
+}
+
+function home_redirect($url_base) {
+    send_status(303, 'See Other');
+    header('Location: '.home_page_url($url_base));
+    die();
+}
+
+function home_post_value($name) {
+    return isset($_POST[$name]) && is_string($_POST[$name]) ? $_POST[$name] : '';
+}
+
+function home_require_csrf($url_base, $configuration) {
+    if (!request_content_type_is(get_request_header('Content-Type'), 'application/x-www-form-urlencoded')) {
+        send_error(415, 'Unsupported Media Type', 'Expected a form-encoded request.');
+    }
+
+    $expected_token = home_csrf_token($url_base, $configuration);
+    if ($expected_token === FALSE
+        || !hash_equals($expected_token, home_post_value('csrf_token'))) {
+        send_error(403, 'Forbidden', 'The form security token is invalid.');
+    }
+}
+
+function home_auth_result_notice($result) {
+    switch ($result['status']) {
+        case 'registered':
+            return array('success', '账号已注册并登录。');
+        case 'logged_in':
+            return array('success', '登录成功。');
+        case 'registration_disabled':
+            return array('error', '当前不允许注册新账号。');
+        case 'invalid_username':
+            return array('error', '用户名须为 3 至 64 个字母、数字、点、短横线或下划线。');
+        case 'invalid_password':
+            return array('error', '密码长度须为 12 至 72 个字符，且不能超过 72 字节。');
+        case 'password_mismatch':
+            return array('error', '两次输入的密码不一致。');
+        case 'username_exists':
+            return array('error', '该用户名已被注册。');
+        case 'invalid_credentials':
+            return array('error', '用户名或密码错误。');
+        case 'invalid_token_name':
+            return array('error', 'Token 名称不能为空，且最多 80 个字符。');
+        case 'token_created':
+            return array('success', 'Access token 已创建。请立即保存，关闭页面后无法再次查看。');
+        case 'token_revoked':
+            return array('success', 'Access token 已撤销。');
+        case 'invalid_token':
+            return array('error', 'Access token 不存在或已撤销。');
+        case 'session_unavailable':
+            return array('error', '当前无法建立安全会话。');
+        default:
+            return array('error', '认证数据库当前不可用。');
+    }
+}
+
+function home_handle_auth_action($url_base, $configuration, $action) {
+    if (!auth_is_enabled()) {
+        send_error(404, 'Not Found', 'Account authentication is disabled.');
+    }
+
+    home_require_csrf($url_base, $configuration);
+    $session_user = auth_session_user();
+
+    if ($action === 'register') {
+        if ($session_user !== NULL) {
+            send_error(409, 'Conflict', 'Already authenticated.');
+        }
+        $result = auth_register(
+            home_post_value('username'),
+            home_post_value('password'),
+            home_post_value('password_confirmation'));
+    } else if ($action === 'login') {
+        if ($session_user !== NULL) {
+            send_error(409, 'Conflict', 'Already authenticated.');
+        }
+        $result = auth_login(home_post_value('username'), home_post_value('password'));
+    } else if ($action === 'logout') {
+        if ($session_user === NULL) {
+            send_error(403, 'Forbidden', 'Login is required.');
+        }
+        if (!auth_logout()) {
+            send_error(500, 'Internal Server Error', 'Unable to close the login session.');
+        }
+        home_set_notice($url_base, $configuration, 'success', '已退出登录。');
+        home_redirect($url_base);
+    } else if ($action === 'create_token') {
+        if ($session_user === NULL) {
+            send_error(403, 'Forbidden', 'Login is required.');
+        }
+        $result = auth_create_access_token($session_user['id'], home_post_value('token_name'));
+    } else if ($action === 'revoke_token') {
+        if ($session_user === NULL) {
+            send_error(403, 'Forbidden', 'Login is required.');
+        }
+        $result = auth_revoke_access_token($session_user['id'], home_post_value('token_id'));
+    } else {
+        send_error(400, 'Bad Request', 'Unknown account action.');
+    }
+
+    $notice = home_auth_result_notice($result);
+    $plaintext_token = isset($result['token']) ? $result['token'] : NULL;
+    home_set_notice($url_base, $configuration, $notice[0], $notice[1], $plaintext_token);
+    home_redirect($url_base);
+}
+
 function home_repository_url_exists($url_base, $definitions, $name) {
     $expected_url = rtrim((string) $url_base, '/').'/'.$name;
     foreach ($definitions as $definition) {
@@ -141,16 +262,7 @@ function home_create_repository(
     if (!home_creation_is_authorized($configuration)) {
         send_error(403, 'Forbidden', 'Authenticated access is required to create repositories.');
     }
-    if (!request_content_type_is(get_request_header('Content-Type'), 'application/x-www-form-urlencoded')) {
-        send_error(415, 'Unsupported Media Type', 'Expected a form-encoded request.');
-    }
-
-    $token = isset($_POST['csrf_token']) && is_string($_POST['csrf_token'])
-        ? $_POST['csrf_token'] : '';
-    $expected_token = home_csrf_token($url_base, $configuration);
-    if ($expected_token === FALSE || !hash_equals($expected_token, $token)) {
-        send_error(403, 'Forbidden', 'The form security token is invalid.');
-    }
+    home_require_csrf($url_base, $configuration);
 
     $value = isset($_POST['repository_name']) && is_string($_POST['repository_name'])
         ? $_POST['repository_name'] : '';
@@ -162,12 +274,9 @@ function home_create_repository(
     }
 
     if ($result['status'] === 'created') {
-        $_SESSION['home_notice'] = array(
-            'type' => 'success',
-            'message' => '仓库 '.$result['name'].' 已创建。');
-        send_status(303, 'See Other');
-        header('Location: '.home_page_url($url_base));
-        die();
+        home_set_notice(
+            $url_base, $configuration, 'success', '仓库 '.$result['name'].' 已创建。');
+        home_redirect($url_base);
     }
 
     $notice = home_creation_result_notice($result);
@@ -281,10 +390,12 @@ h1 { margin: 0 0 .25rem; font-size: 1.5rem; }
 h2 { margin: 2.5rem 0 .5rem; font-size: 1.1rem; }
 p { margin: 0 0 1rem; }
 .lead { color: #5b6472; }
-.create { margin: 1.75rem 0 2rem; padding: 1rem 0; border-top: 1px solid #d5dae1;
+.account, .create { margin: 1.75rem 0 2rem; padding: 1rem 0; border-top: 1px solid #d5dae1;
     border-bottom: 1px solid #d5dae1; }
-.create h2 { margin: 0 0 .25rem; }
-.create form { display: flex; gap: .6rem; align-items: end; }
+.account h2, .create h2 { margin: 0 0 .25rem; }
+.account-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; }
+.account form, .create form, .token-form { display: flex; gap: .6rem; align-items: end; }
+.account .credentials { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; flex: 1; }
 .field { flex: 1 1 22rem; }
 label { display: block; margin-bottom: .3rem; font-weight: 600; }
 input { box-sizing: border-box; width: 100%; min-height: 2.6rem; padding: .5rem .7rem;
@@ -295,6 +406,15 @@ button { min-height: 2.6rem; padding: .5rem 1rem; border: 1px solid #175b3a;
     border-radius: .35rem; color: #fff; background: #176b43; font: inherit;
     font-weight: 600; cursor: pointer; }
 button:hover { background: #125635; }
+.button-danger { border-color: #983434; background: #a43a3a; }
+.button-danger:hover { background: #842e2e; }
+.account-bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.account-bar form, .token-list form { display: block; }
+.account-bar button, .token-list button { width: auto; margin: 0; }
+.token-result { user-select: all; }
+.token-list { margin: 1rem 0 0; padding: 0; list-style: none; }
+.token-list li { display: flex; justify-content: space-between; gap: 1rem; align-items: center;
+    padding: .65rem 0; border-bottom: 1px solid #d5dae1; }
 .hint { margin: .4rem 0 0; color: #5b6472; font-size: .9rem; }
 .notice { margin: 1rem 0; padding: .65rem .8rem; border-left: .25rem solid; }
 .notice-success { border-color: #1f7a4b; background: #edf8f1; color: #155735; }
@@ -319,14 +439,16 @@ pre { padding: .75rem 1rem; overflow-x: auto; border: 1px solid #d5dae1;
 footer { margin-top: 2.5rem; color: #5b6472; font-size: .9rem; }
 @media (max-width: 42rem) {
     body { padding-top: 1.5rem; }
-    .create form { display: block; }
+    .account-grid, .account .credentials { display: block; }
+    .account form, .create form, .token-form { display: block; }
     button { width: 100%; margin-top: .65rem; }
+    .account-bar button, .token-list button { width: auto; margin-top: 0; }
     table { display: block; overflow-x: auto; }
 }
 @media (prefers-color-scheme: dark) {
     body { color: #e6e9ef; background: #12161c; }
     .lead, .hint, caption, footer, .badge-quiet, .empty { color: #9aa4b2; }
-    .create, th, td { border-color: #2b323d; }
+    .account, .create, th, td, .token-list li { border-color: #2b323d; }
     input { border-color: #596474; background: #1a1f27; color: #e6e9ef; }
     pre { border-color: #2b323d; background: #1a1f27; }
     .empty { border-color: #3a424f; }
@@ -339,6 +461,84 @@ footer { margin-top: 2.5rem; color: #5b6472; font-size: .9rem; }
 <h1>PHP Git 服务器</h1>
 <p class="lead">通过 HTTP 发布下列 Git 仓库，支持 clone、fetch、pull，并可按仓库启用 push。</p>
 HTML;
+}
+
+function home_send_authentication($url_base, $configuration, $notice) {
+    if (!auth_is_enabled()) {
+        return;
+    }
+
+    echo '<section class="account" aria-labelledby="account-title">' ."\n";
+    echo '<h2 id="account-title">账号与 Access Token</h2>' ."\n";
+    if ($notice !== NULL && isset($notice['token']) && is_string($notice['token'])) {
+        echo '<pre class="token-result"><code>'.home_escape($notice['token']).'</code></pre>' ."\n";
+    }
+
+    $csrf_token = home_csrf_token($url_base, $configuration);
+    if ($csrf_token === FALSE) {
+        echo '<p class="notice notice-error" role="status">当前无法初始化安全表单。</p>' ."\n";
+        echo '</section>' ."\n";
+        return;
+    }
+
+    $user = auth_session_user();
+    $action = home_escape(home_page_url($url_base));
+    $csrf_field = '<input type="hidden" name="csrf_token" value="'
+        .home_escape($csrf_token).'">' ."\n";
+    if ($user === NULL) {
+        echo '<div class="account-grid">' ."\n";
+        echo '<form method="post" action="'.$action.'">' ."\n".$csrf_field;
+        echo '<input type="hidden" name="action" value="login">' ."\n";
+        echo '<div class="credentials"><div><label for="login-username">用户名</label>' ."\n";
+        echo '<input id="login-username" name="username" maxlength="64" autocomplete="username" required></div>' ."\n";
+        echo '<div><label for="login-password">密码</label>' ."\n";
+        echo '<input id="login-password" name="password" type="password" minlength="12" maxlength="72" autocomplete="current-password" required></div></div>' ."\n";
+        echo '<button type="submit">登录</button></form>' ."\n";
+
+        if (auth_registration_is_enabled()) {
+            echo '<form method="post" action="'.$action.'">' ."\n".$csrf_field;
+            echo '<input type="hidden" name="action" value="register">' ."\n";
+            echo '<div class="credentials"><div><label for="register-username">注册用户名</label>' ."\n";
+            echo '<input id="register-username" name="username" minlength="3" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-]" autocomplete="username" required></div>' ."\n";
+            echo '<div><label for="register-password">密码</label>' ."\n";
+            echo '<input id="register-password" name="password" type="password" minlength="12" maxlength="72" autocomplete="new-password" required></div>' ."\n";
+            echo '<div><label for="register-password-confirmation">确认密码</label>' ."\n";
+            echo '<input id="register-password-confirmation" name="password_confirmation" type="password" minlength="12" maxlength="72" autocomplete="new-password" required></div></div>' ."\n";
+            echo '<button type="submit">注册</button></form>' ."\n";
+        }
+        echo '</div>' ."\n";
+        echo '<p class="hint">网页登录使用密码；Git clone、pull 和 push 使用用户名与 access token。</p>' ."\n";
+        echo '</section>' ."\n";
+        return;
+    }
+
+    echo '<div class="account-bar"><p>当前账号：<strong>'.home_escape($user['username']).'</strong></p>' ."\n";
+    echo '<form method="post" action="'.$action.'">'.$csrf_field;
+    echo '<input type="hidden" name="action" value="logout">' ."\n";
+    echo '<button class="button-danger" type="submit">退出</button></form></div>' ."\n";
+    echo '<form class="token-form" method="post" action="'.$action.'">'.$csrf_field;
+    echo '<input type="hidden" name="action" value="create_token">' ."\n";
+    echo '<div class="field"><label for="token-name">新 Token 名称</label>' ."\n";
+    echo '<input id="token-name" name="token_name" maxlength="80" placeholder="工作电脑" required></div>' ."\n";
+    echo '<button type="submit">创建 Token</button></form>' ."\n";
+
+    $tokens = auth_list_access_tokens($user['id']);
+    if ($tokens === FALSE) {
+        echo '<p class="notice notice-error">当前无法读取 access token 列表。</p>' ."\n";
+    } else if (!empty($tokens)) {
+        echo '<ul class="token-list">' ."\n";
+        foreach ($tokens as $token) {
+            $last_used = $token['last_used_at'] === NULL ? '从未使用' : '最后使用 '.$token['last_used_at'];
+            echo '<li><span><strong>'.home_escape($token['name']).'</strong><br>';
+            echo '<span class="hint">创建于 '.home_escape($token['created_at']).'；'.home_escape($last_used).'</span></span>' ."\n";
+            echo '<form method="post" action="'.$action.'">'.$csrf_field;
+            echo '<input type="hidden" name="action" value="revoke_token">' ."\n";
+            echo '<input type="hidden" name="token_id" value="'.home_escape($token['id']).'">' ."\n";
+            echo '<button class="button-danger" type="submit">撤销</button></form></li>' ."\n";
+        }
+        echo '</ul>' ."\n";
+    }
+    echo '</section>' ."\n";
 }
 
 function home_send_creation($url_base, $configuration, $notice, $value) {
@@ -354,7 +554,7 @@ function home_send_creation($url_base, $configuration, $notice, $value) {
     }
 
     if (!home_creation_is_authorized($configuration)) {
-        echo '<p class="lead">需要先通过 Web 服务器身份验证，才能创建仓库。</p>' ."\n";
+        echo '<p class="lead">需要先登录应用账号，才能创建仓库。</p>' ."\n";
         echo '</section>' ."\n";
         return;
     }
@@ -433,7 +633,7 @@ function home_send_usage($repositories, $prefix) {
         .'git pull'."\n"
         .'git push origin main</code></pre>'."\n";
     echo '<p class="lead">push 需要仓库启用 <code>push</code> 选项；启用认证时还需要'
-        .'由 Web 服务器完成身份验证。</p>'."\n";
+        .'使用账号用户名和 access token。</p>'."\n";
 }
 
 function home_render(
@@ -451,7 +651,12 @@ function home_render(
     header('Content-Security-Policy: default-src \'none\'; style-src \'unsafe-inline\'');
 
     home_send_head();
-    home_send_creation($url_base, $configuration, $notice, $value);
+    if ($notice !== NULL) {
+        echo '<p class="notice notice-'.home_escape($notice['type']).'" role="status">'
+            .home_escape($notice['message']).'</p>' ."\n";
+    }
+    home_send_authentication($url_base, $configuration, $notice);
+    home_send_creation($url_base, $configuration, NULL, $value);
 
     if (empty($repositories)) {
         home_send_empty_notice();
@@ -469,6 +674,10 @@ function home_dispatch($url_base, $definitions, $configuration, $application) {
     $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
 
     if ($method === 'POST') {
+        $action = home_post_value('action');
+        if ($action !== '' && $action !== 'create_repository') {
+            home_handle_auth_action($url_base, $configuration, $action);
+        }
         home_create_repository($url_base, $definitions, $configuration, $application);
     }
 
@@ -480,10 +689,7 @@ function home_dispatch($url_base, $definitions, $configuration, $application) {
         die();
     }
 
-    $notice = $method === 'GET'
-        && home_managed_repositories_configured($configuration)
-        && home_creation_is_authorized($configuration)
-        ? home_take_notice($url_base, $configuration) : NULL;
+    $notice = $method === 'GET' ? home_take_notice($url_base, $configuration) : NULL;
     home_render($url_base, $definitions, $configuration, $notice);
     die();
 }
@@ -499,6 +705,14 @@ if (!isset($repos) || !is_array($repos)) {
 if (!isset($git_executable)) {
     $git_executable = 'git';
 }
+
+if (!isset($auth)) {
+    $auth = array();
+}
+if (!is_array($auth)) {
+    send_error(500, 'Internal Server Error', 'The authentication configuration is invalid.');
+}
+auth_configure($auth, $url_base);
 
 if (!isset($managed_repositories)) {
     $managed_repositories = array();

@@ -20,7 +20,7 @@ function push_require_access($repository, $request) {
     }
 
     if ($repository['options']['require_auth'] && $request['user'] === NULL) {
-        send_error(403, 'Forbidden', 'Authenticated access is required for push.');
+        require_authentication('A valid username and access token are required for push.');
     }
 }
 

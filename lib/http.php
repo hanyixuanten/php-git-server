@@ -30,6 +30,10 @@ function get_request_header($name) {
         return $_SERVER[$key];
     }
 
+    if (!strcasecmp($name, 'Authorization') && isset($_SERVER['REDIRECT_HTTP_AUTHORIZATION'])) {
+        return $_SERVER['REDIRECT_HTTP_AUTHORIZATION'];
+    }
+
     if (!strcasecmp($name, 'Content-Type') && isset($_SERVER['CONTENT_TYPE'])) {
         return $_SERVER['CONTENT_TYPE'];
     }
@@ -51,11 +55,16 @@ function request_content_type_is($content_type, $expected) {
 }
 
 function get_authenticated_user() {
-    if (isset($_SERVER['REMOTE_USER']) && $_SERVER['REMOTE_USER'] !== '') {
-        return $_SERVER['REMOTE_USER'];
-    }
+    return auth_get_authenticated_user();
+}
 
-    return NULL;
+function get_access_token_user() {
+    return auth_get_access_token_user();
+}
+
+function require_authentication($message) {
+    header('WWW-Authenticate: Basic realm="PHP Git Server", charset="UTF-8"');
+    send_error(401, 'Unauthorized', $message);
 }
 
 function format_packet_line($payload) {

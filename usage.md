@@ -18,6 +18,7 @@ Git 协议不会向服务器发送名为“branch”或“tag”的独立命令�
 ```text
 index.php                 主入口，加载配置并注册路由
 lib/http.php              HTTP 状态、响应头和认证用户读取
+lib/auth.php              MySQL 用户、网页登录会话与 Access Token 验证
 lib/repository.php        仓库配置、安全路径和 Dumb HTTP refs
 lib/router.php            请求路由
 lib/git_service.php       Smart HTTP Git 子进程与流式传输
@@ -34,12 +35,13 @@ operations/tag.php        refs/tags/* 标签更新规则
 
 - Apache HTTP Server。
 - PHP 7.4 或更新版本。
+- MySQL 5.7+/MariaDB 10.2+ 与 PHP PDO MySQL 扩展（`pdo_mysql`）。
 - Apache `mod_rewrite` 模块。
 - 允许项目目录中的 `.htaccess` 使用重写规则。
 - Smart HTTP 需要服务器安装 Git，并允许 PHP 使用 `proc_open`。
 - Web 服务器进程对仓库具有读取权限；启用 push 时还需要写入权限。
 
-项目没有 Composer 依赖，也不需要构建。
+项目没有 Composer 依赖，也不需要构建。若系统尚未启用 PDO MySQL，先安装对应 PHP 扩展并重启 Apache/PHP-FPM。
 
 服务器可以不安装 Git。Git 或 `proc_open` 不可用时，应用使用纯 PHP 实现的 Smart HTTP 服务端协议，支持普通 SHA-1 仓库的 clone、fetch、pull、push、delta、分支和标签；PHP 必须启用 zlib 与 hash 扩展。
 
@@ -60,6 +62,18 @@ cp config.php.sample config.php
 ```
 
 不要提交真实的 `config.php`，其中可能包含服务器目录结构和安全策略。
+
+创建数据库、低权限应用用户并导入表结构。下面的密码必须替换为随机强密码：
+
+```sql
+CREATE DATABASE php_git_server CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'php_git_server'@'127.0.0.1' IDENTIFIED BY 'replace-with-a-long-random-password';
+GRANT SELECT, INSERT, UPDATE ON php_git_server.* TO 'php_git_server'@'127.0.0.1';
+```
+
+```sh
+mysql -u root -p php_git_server < schema.mysql.sql
+```
 
 确认 Apache 已启用重写模块：
 
@@ -97,9 +111,17 @@ https://git.example.com/php-git-server/
 $url_base = '/php-git-server';
 $git_executable = 'git';
 
+$auth = array(
+    'enabled' => TRUE,
+    'registration_enabled' => TRUE,
+    'session_cookie_secure' => TRUE,
+    'database' => array(
+        'dsn' => 'mysql:host=127.0.0.1;port=3306;dbname=php_git_server;charset=utf8mb4',
+        'username' => 'php_git_server',
+        'password' => 'replace-with-a-long-random-password'));
+
 $managed_repositories = array(
     'require_auth' => TRUE,
-    'session_cookie_secure' => TRUE,
     'options' => array(
         'read' => TRUE,
         'push' => TRUE,
@@ -158,7 +180,6 @@ array('/self.git', '.git')
 ```php
 $managed_repositories = array(
     'require_auth' => TRUE,
-    'session_cookie_secure' => TRUE,
     'options' => array(
         'read' => TRUE,
         'push' => TRUE,
@@ -166,14 +187,14 @@ $managed_repositories = array(
 ```
 
 - 顶层 `require_auth` 控制谁能从主界面创建仓库，默认是 `TRUE`。
-- `session_cookie_secure` 控制创建表单会话 Cookie 的 Secure 属性。应用直连 HTTPS 时会自动识别；TLS 在可信反向代理终止时应显式设为 `TRUE`，并确保外部流量只能通过 HTTPS 访问。
+- 启用账号认证时，`$auth['session_cookie_secure']` 控制登录与表单共用 Session Cookie 的 Secure 属性。应用直连 HTTPS 时会自动识别；TLS 在可信反向代理终止时应显式设为 `TRUE`，并确保外部流量只能通过 HTTPS 访问。
 - `options` 是所有主界面新建仓库共同继承的仓库选项，其含义与 `$repos` 条目相同。
 - 设置 `$managed_repositories = array();` 可完全关闭主界面创建功能。
 - 仓库名称仅允许字母、数字、点、短横线和下划线，长度最多 64 个字符；`.git` 后缀可省略。
 - 新仓库是 bare 仓库，默认分支为 `main`。应用内的创建请求使用锁、暂存目录和原子改名，不会互相覆盖；托管目录不应由其他进程同时写入。
 - Git 或 `proc_open` 不可用时，应用以纯 PHP 创建标准 SHA-1 格式的空 bare 仓库；之后可以通过 Dumb HTTP clone，但首次写入仍需在其他具备 Git 的环境中生成仓库内容并同步到服务器。
 
-静态 `$repos` 条目与托管目录中的仓库 URL 冲突时，以静态条目为准。生产环境应让创建页面受到 Web 服务器认证保护，并保持顶层 `require_auth => TRUE`；表单本身还使用会话 CSRF 令牌。
+静态 `$repos` 条目与托管目录中的仓库 URL 冲突时，以静态条目为准。生产环境应启用应用账号认证并保持顶层 `require_auth => TRUE`；仓库创建要求已登录 Session，所有修改表单还使用会话 CSRF 令牌。
 
 ## 5. 仓库选项
 
@@ -183,7 +204,7 @@ $managed_repositories = array(
 | --- | --- | --- |
 | `read` | `TRUE` | 允许 clone、fetch、pull 和 Dumb HTTP 对象读取 |
 | `push` | `FALSE` | 启用 Smart HTTP receive-pack |
-| `require_auth` | `TRUE` | push 前必须存在由 Web 服务器验证并设置的 `REMOTE_USER` |
+| `require_auth` | `TRUE` | push 前必须提供有效的应用用户名和 Access Token |
 | `branches` | `TRUE` | 允许更新 `refs/heads/*` |
 | `tags` | `TRUE` | 允许更新 `refs/tags/*` |
 | `other_refs` | `FALSE` | 允许 notes、replace 等其他 ref 命名空间 |
@@ -198,33 +219,26 @@ push 请求会先写入系统临时目录，以便在交给 `git-receive-pack` �
 
 ## 6. 身份认证
 
-本项目不保存用户、密码或访问令牌。`require_auth => TRUE` 只信任 Web 服务器认证完成后设置的 `REMOTE_USER`；普通客户端提交的用户名不会被当作已认证身份。
+### 账号配置
 
-最简单的方式是让 Apache 保护整个仓库 URL：
+`$auth` 启用后，首页提供注册和登录。用户密码通过 PHP `password_hash()` 保存；应用不会保存明文密码。`registration_enabled => FALSE` 可关闭新用户注册，已有用户仍可登录。生产部署完成首批账号注册后，建议关闭公开注册，或在反向代理/WAF 中为注册和登录请求配置速率限制。
 
-```apache
-<LocationMatch "^/php-git-server/project\.git(?:/|$)">
-    AuthType Basic
-    AuthName "Private Git"
-    AuthUserFile /etc/apache2/git.htpasswd
-    Require valid-user
-</LocationMatch>
+`session_cookie_secure` 在应用直连 HTTPS 时会自动推断。TLS 在可信反向代理终止时必须显式设为 `TRUE`，并确保外部只能通过 HTTPS 访问。不要再给应用路径配置 Apache `AuthType Basic`，否则 Apache 会在请求到达 PHP 前拦截应用注册、登录及 token 验证。
+
+### 创建和使用 Access Token
+
+登录首页后填写 Token 名称并点击“创建 Token”。明文 token 仅显示一次，格式为 `pgs_` 加 64 个十六进制字符；数据库仅保存 SHA-256 摘要。页面可以查看最后使用时间并随时撤销 token。
+
+Git 通过 HTTP Basic 发送凭据：用户名填写注册用户名，密码填写 access token，不能填写网页登录密码。例如：
+
+```sh
+git clone https://git.example.com/php-git-server/project.git
+git push origin main
 ```
 
-启用主界面创建时，还必须让认证覆盖应用首页。例如保护整个应用路径：
+Git 收到受保护 push 的 `401` 响应后会提示输入用户名和密码。也可以使用操作系统的 Git Credential Manager 或其他安全凭据助手保存 token；不要把 token 写入远程 URL、shell 历史、仓库配置或脚本。
 
-```apache
-<Location "/php-git-server/">
-    AuthType Basic
-    AuthName "Git server"
-    AuthUserFile /etc/apache2/git.htpasswd
-    Require valid-user
-</Location>
-```
-
-如果只希望认证创建入口而允许匿名 clone，可在 Web 服务器中按请求方法和路径制定更细的规则，但必须确认首页 `POST` 最终能向 PHP 提供可信的 `REMOTE_USER`。
-
-生产环境必须配合 HTTPS。也可以使用反向代理、单点登录或其他认证模块，但需要确认认证结果最终以可信的 `REMOTE_USER` 传给 PHP。
+默认允许匿名 clone/fetch/pull；`require_auth` 当前保护 push 与主界面仓库创建。Token 验证成功后，用户名会作为 `REMOTE_USER` 传给 Git 子进程和 hooks，现有 hooks 可以继续读取该变量。
 
 如果设置：
 
@@ -377,6 +391,12 @@ for file in lib/*.php operations/*.php; do
 done
 ```
 
+确认 PDO MySQL 已启用：
+
+```sh
+php -m | grep pdo_mysql
+```
+
 ### 查看远程 refs
 
 ```sh
@@ -411,7 +431,7 @@ curl -i https://git.example.com/php-git-server/project.git/not-found
 curl -i -X POST https://git.example.com/php-git-server/project.git/HEAD
 ```
 
-push 未启用或 ref 命名空间被禁止时应返回 `403`。
+受保护 push 未提供有效 token 时应返回 `401` 和 `WWW-Authenticate`；push 未启用或 ref 命名空间被禁止时应返回 `403`。
 
 ## 11. 常见问题
 
@@ -431,10 +451,23 @@ push 未启用或 ref 命名空间被禁止时应返回 `403`。
 依次检查：
 
 1. 仓库是否设置 `'push' => TRUE`。
-2. `require_auth` 为 `TRUE` 时，Web 服务器是否设置了可信 `REMOTE_USER`。
-3. 分支更新是否启用了 `branches`。
-4. 标签更新是否启用了 `tags`。
-5. 目标是否属于其他 ref 命名空间，而 `other_refs` 仍为 `FALSE`。
+2. 分支更新是否启用了 `branches`。
+3. 标签更新是否启用了 `tags`。
+4. 目标是否属于其他 ref 命名空间，而 `other_refs` 仍为 `FALSE`。
+
+### push 返回 401 或反复询问密码
+
+依次检查：
+
+1. 密码位置输入的是首页生成的 access token，而不是网页登录密码。
+2. 用户名与创建 token 的账号完全一致；用户名区分大小写。
+3. token 是否已撤销或被凭据助手缓存为旧值。
+4. PHP 是否启用 `pdo_mysql`，`$auth['database']` 是否能连接数据库。
+5. Apache/FastCGI 是否保留 `Authorization` 头；项目 `.htaccess` 已包含对应重写环境变量规则。
+
+### 首页显示认证数据库不可用
+
+检查 PHP/Apache 错误日志、`pdo_mysql` 扩展、MySQL 地址和账号权限，并确认已导入 `schema.mysql.sql`。应用数据库账号需要 `SELECT`、`INSERT` 和 `UPDATE`，不需要运行时建表或删除权限。
 
 ### push 返回 500 或远端断开
 
@@ -465,9 +498,10 @@ GIT_TRACE=1 GIT_CURL_VERBOSE=1 git clone \
 
 - 对所有生产流量使用 HTTPS。
 - push 默认保持关闭，只为确实需要写入的仓库启用。
-- 主界面创建默认要求可信的 `REMOTE_USER`，托管目录不要放置其他文件。
-- 使用 Apache、反向代理或统一身份系统完成真实认证。
-- 不要把用户自行提供的 HTTP 头直接映射成可信 `REMOTE_USER`。
+- 主界面创建默认要求已登录应用账号，托管目录不要放置其他文件。
+- 公开注册应配合速率限制；不需要公开注册时设置 `registration_enabled => FALSE`。
+- 数据库账号只授予 `pgit_users` 和 `pgit_access_tokens` 所需的最小读写权限，并单独备份。
+- 定期撤销不再使用的 token；不要记录 `Authorization` 头或 token 明文。
 - 仓库路径必须来自静态配置或受控托管目录，不根据 URL 拼接任意文件系统路径。
 - 只给 Web 服务器最小必要的文件权限。
 - 将 `other_refs` 保持为 `FALSE`，除非确实需要 notes、replace 或自定义 refs。
