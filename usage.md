@@ -1,112 +1,117 @@
 # 使用说明
 
-本项目使用 PHP 实现 Git 的 **Dumb HTTP（哑 HTTP）只读协议**。它可以让 Git 客户端通过 HTTP 查看和克隆服务器上的 Git 仓库，不依赖服务器安装 `git` 命令。
+本项目通过 PHP 发布显式配置的 Git 仓库，同时支持 **Dumb HTTP** 与 **Smart HTTP**：
 
-> 本项目只提供读取功能，不支持通过 HTTP `push`，也不支持 Git Smart HTTP。
+- `clone`：支持 Smart HTTP；服务器没有 Git/`proc_open` 时可回退到只读 Dumb HTTP。
+- `pull` / `fetch`：通过 `git-upload-pack --stateless-rpc` 提供。
+- `push`：通过 `git-receive-pack --stateless-rpc` 提供，默认关闭。
+- `branch`：远程分支以 `refs/heads/*` 表示，可通过 push 创建、更新和删除。
+- `tag`：远程标签以 `refs/tags/*` 表示，可通过 push 创建、更新和删除。
 
-## 1. 环境要求
+Git 协议不会向服务器发送名为“branch”或“tag”的独立命令：本地 `git branch`、`git tag` 不访问服务器；远程分支和标签通过 fetch/pull 获取，通过 push 更新。
+
+## 1. 代码结构
+
+`index.php` 是唯一入口和主路由。各项能力已拆分为独立文件：
+
+```text
+index.php                 主入口，加载配置并注册路由
+lib/http.php              HTTP 状态、响应头和认证用户读取
+lib/repository.php        仓库配置、安全路径和 Dumb HTTP refs
+lib/router.php            请求路由
+lib/git_service.php       Smart HTTP Git 子进程与流式传输
+operations/clone.php      Dumb HTTP clone/object 资源
+operations/pull.php       upload-pack：clone/fetch/pull
+operations/push.php       receive-pack：push 请求、大小及 refs 校验
+operations/branch.php     refs/heads/* 分支更新规则
+operations/tag.php        refs/tags/* 标签更新规则
+```
+
+## 2. 环境要求
 
 推荐环境：
 
-- Apache HTTP Server
-- PHP（已在 PHP 8.5 下验证）
-- Apache `mod_rewrite` 模块
-- 允许项目目录中的 `.htaccess` 使用重写规则
-- Web 服务器进程对被发布的 Git 仓库具有读取权限
+- Apache HTTP Server。
+- PHP 7.4 或更新版本。
+- Apache `mod_rewrite` 模块。
+- 允许项目目录中的 `.htaccess` 使用重写规则。
+- Smart HTTP 需要服务器安装 Git，并允许 PHP 使用 `proc_open`。
+- Web 服务器进程对仓库具有读取权限；启用 push 时还需要写入权限。
 
 项目没有 Composer 依赖，也不需要构建。
 
-## 2. 安装
+仅使用 Dumb HTTP 只读功能时，服务器可以不安装 Git；但 push 一定需要 Git。若 PHP 配置通过 `disable_functions` 禁用了 `proc_open`，Smart HTTP 也不可用。
 
-将本项目放到 Apache 可以访问的目录中。例如，项目对应的 URL 为：
+## 3. 安装
 
-```text
-https://git.example.com/php-git-server
-```
-
-目录中至少应包含：
+将项目放到 Apache 可以访问的目录中，例如：
 
 ```text
-php-git-server/
-├── .htaccess
-├── config.php
-└── index.php
+https://git.example.com/php-git-server/
 ```
 
-复制示例配置：
+复制配置模板：
 
 ```sh
 cp config.php.sample config.php
 ```
 
-`config.php` 是部署环境配置文件，不应提交到版本库。
+不要提交真实的 `config.php`，其中可能包含服务器目录结构和安全策略。
 
-## 3. 配置 Apache
-
-确认 Apache 已启用 `mod_rewrite`：
+确认 Apache 已启用重写模块：
 
 ```sh
 sudo a2enmod rewrite
-sudo systemctl restart apache2
+sudo systemctl reload apache2
 ```
 
-Apache 站点配置需要允许 `.htaccess` 中的重写规则生效。例如：
+对应站点或目录还需要允许 `.htaccess`：
 
 ```apache
-<Directory /var/www/html/php-git-server>
+<Directory /var/www/php-git-server>
     AllowOverride FileInfo
     Require all granted
 </Directory>
 ```
 
-修改配置后重新加载 Apache：
+项目自带的 `.htaccess` 会把请求转发到 `index.php`，避免仓库文件绕过安全路由被 Web 服务器直接公开。
 
-```sh
-sudo systemctl reload apache2
+## 4. 基本配置
+
+### 部署在子目录
+
+应用地址为：
+
+```text
+https://git.example.com/php-git-server/
 ```
 
-不同 Linux 发行版的 Apache 配置目录和服务名称可能不同，请按实际环境调整。
-
-### 不要使用 PHP 内置服务器进行生产部署
-
-PHP 内置服务器不会处理 `.htaccess`。它可以配合 `index.php` 作为路由脚本进行临时测试，但不应作为生产部署方式：
-
-```sh
-php -S 127.0.0.1:8080 index.php
-```
-
-## 4. 配置仓库
-
-编辑 `config.php`：
+配置示例：
 
 ```php
 <?php
 
-/* 本应用在网站中的 URL 路径；末尾不要加斜杠 */
 $url_base = '/php-git-server';
+$git_executable = 'git';
 
-/* 每项依次为公开仓库 URL 和服务器上的 Git 仓库路径 */
 $repos = array(
-    array('/project.git', '/srv/git/project.git'),
-    array('/wiki.git', '/srv/git/wiki.git'));
+    array('/project.git', '/srv/git/project.git', array(
+        'read' => TRUE,
+        'push' => TRUE,
+        'require_auth' => TRUE,
+        'branches' => TRUE,
+        'tags' => TRUE,
+        'other_refs' => FALSE,
+        'max_request_bytes' => 0)));
 ```
 
-上述配置会公开以下只读地址：
+仓库地址为：
 
 ```text
 https://git.example.com/php-git-server/project.git
-https://git.example.com/php-git-server/wiki.git
 ```
 
 ### 部署在域名根路径
-
-如果应用直接部署在域名根路径，例如仓库地址为：
-
-```text
-https://git.example.com/project.git
-```
-
-则配置为：
 
 ```php
 $url_base = '';
@@ -115,103 +120,174 @@ $repos = array(
     array('/project.git', '/srv/git/project.git'));
 ```
 
-### 仓库路径说明
+仓库地址为：
 
-仓库路径可以指向：
-
-- bare 仓库，例如 `/srv/git/project.git`
-- 普通工作仓库的 `.git` 目录，例如 `/srv/project/.git`
-
-推荐发布 bare 仓库，以避免工作区状态影响部署和维护。
-
-如果服务器上安装了 Git，可以这样创建 bare 仓库：
-
-```sh
-git clone --bare /path/to/project /srv/git/project.git
+```text
+https://git.example.com/project.git
 ```
 
-本项目运行时不执行 Git 命令，因此生产服务器本身可以不安装 Git。
+### 相对路径
 
-## 5. 设置文件权限
+仓库路径可以是绝对路径，也可以是相对于本项目目录的路径。例如：
 
-Apache/PHP 进程只需要读取仓库，不需要写入权限。以 Debian/Ubuntu 常见的 `www-data` 用户为例，可按实际权限策略设置：
+```php
+array('/self.git', '.git')
+```
+
+推荐生产环境使用明确的绝对路径和 bare 仓库。
+
+## 5. 仓库选项
+
+每个 `$repos` 条目的第三项是选项数组。未提供第三项的旧配置仍可使用，并保持“允许读取、禁止 push”的安全默认值。
+
+| 选项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `read` | `TRUE` | 允许 clone、fetch、pull 和 Dumb HTTP 对象读取 |
+| `push` | `FALSE` | 启用 Smart HTTP receive-pack |
+| `require_auth` | `TRUE` | push 前必须存在由 Web 服务器验证并设置的 `REMOTE_USER` |
+| `branches` | `TRUE` | 允许更新 `refs/heads/*` |
+| `tags` | `TRUE` | 允许更新 `refs/tags/*` |
+| `other_refs` | `FALSE` | 允许 notes、replace 等其他 ref 命名空间 |
+| `max_request_bytes` | `0` | push 请求最大字节数；`0` 表示不限制 |
+
+`branches`、`tags` 和 `other_refs` 只控制 push 更新，不会隐藏已经存在的 refs。若要限制读取内容，应发布不同的仓库，而不是依赖 ref 更新选项。
+
+push 请求会先写入系统临时目录，以便在交给 `git-receive-pack` 前检查 ref 命名空间。启用较大的 push 时，应保证 PHP 系统临时目录具有足够空间；也可以使用 `max_request_bytes` 设置上限。
+
+## 6. 身份认证
+
+本项目不保存用户、密码或访问令牌。`require_auth => TRUE` 只信任 Web 服务器认证完成后设置的 `REMOTE_USER`；普通客户端提交的用户名不会被当作已认证身份。
+
+最简单的方式是让 Apache 保护整个仓库 URL：
+
+```apache
+<LocationMatch "^/php-git-server/project\.git(?:/|$)">
+    AuthType Basic
+    AuthName "Private Git"
+    AuthUserFile /etc/apache2/git.htpasswd
+    Require valid-user
+</LocationMatch>
+```
+
+生产环境必须配合 HTTPS。也可以使用反向代理、单点登录或其他认证模块，但需要确认认证结果最终以可信的 `REMOTE_USER` 传给 PHP。
+
+如果设置：
+
+```php
+'require_auth' => FALSE
+```
+
+则任何能访问 URL 的用户都可 push。此设置只适合隔离的本地开发环境或已经由其他网络边界严格保护的服务。
+
+## 7. 创建和授权仓库
+
+推荐使用 bare 仓库：
+
+```sh
+git init --bare /srv/git/project.git
+```
+
+只读仓库只需要让 Apache/PHP 用户可读取目录和文件。启用 push 时，运行 PHP 的用户必须能够创建和修改 objects、refs、日志及锁文件。例如可把仓库交给专用组管理：
 
 ```sh
 sudo chown -R git:www-data /srv/git/project.git
-sudo find /srv/git/project.git -type d -exec chmod 750 {} \;
-sudo find /srv/git/project.git -type f -exec chmod 640 {} \;
+sudo find /srv/git/project.git -type d -exec chmod 2770 {} \;
+sudo find /srv/git/project.git -type f -exec chmod 660 {} \;
 ```
 
-不要为了省事给仓库设置全局可写权限，例如 `chmod -R 777`。
+权限策略应根据服务器实际用户、组和备份方案调整。不要使用 `chmod -R 777`。
 
-## 6. 验证部署
+仓库中的 hooks 会在 `git-receive-pack` 处理 push 时以 PHP/Web 服务器用户身份执行。只能发布受信任的仓库和 hooks，并确保 hooks 不接受未经校验的外部参数去执行任意命令。
 
-### 检查 PHP 语法
+## 8. 操作示例
 
-```sh
-php -l index.php
-php -l config.php
-```
-
-### 查看远程引用
-
-```sh
-git ls-remote https://git.example.com/php-git-server/project.git
-```
-
-正常情况下会看到类似输出：
+以下示例假设仓库 URL 为：
 
 ```text
-0123456789abcdef0123456789abcdef01234567    HEAD
-0123456789abcdef0123456789abcdef01234567    refs/heads/main
+https://git.example.com/php-git-server/project.git
 ```
 
-### 克隆仓库
+### clone
 
 ```sh
 git clone https://git.example.com/php-git-server/project.git
 ```
 
-### 检查 HTTP 状态码
-
-不存在的路径应返回 `404`：
+### pull / fetch
 
 ```sh
-curl -i https://git.example.com/php-git-server/project.git/not-found
+cd project
+git pull --ff-only
+
+git fetch origin
 ```
 
-不支持的方法应返回 `405`，并包含 `Allow: GET`：
+clone、fetch 和 pull 在服务器端共用 upload-pack。服务器无法区分一次 fetch 是首次 clone 还是后续 pull。
+
+### push 提交
 
 ```sh
-curl -i -X POST https://git.example.com/php-git-server/project.git/HEAD
+git add .
+git commit -m "Update project"
+git push origin main
 ```
 
-## 7. 更新已发布的仓库
-
-本项目不支持 HTTP push。需要通过其他方式更新服务器上的仓库，例如：
-
-- SSH
-- 文件同步工具
-- 部署脚本
-- CI/CD
-- 服务器本地文件路径或 SSH 协议执行 `git push`
-
-例如，从有写权限的环境推送到 bare 仓库：
+### 创建并推送分支
 
 ```sh
-git remote add publish ssh://git@git.example.com/srv/git/project.git
-git push publish main
+git switch -c feature/login
+git push -u origin feature/login
 ```
 
-本项目会动态生成 `/info/refs` 和 `/objects/info/packs`，通常不需要手动执行：
+查看远程分支：
 
 ```sh
-git update-server-info
+git branch -r
 ```
 
-## 8. 支持范围
+删除远程分支：
 
-当前支持通过 `GET` 读取以下 Dumb HTTP 资源：
+```sh
+git push origin --delete feature/login
+```
+
+以上操作需要仓库同时启用 `push` 和 `branches`。
+
+### 创建并推送标签
+
+推荐创建 annotated tag：
+
+```sh
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+推送所有本地标签：
+
+```sh
+git push origin --tags
+```
+
+删除远程标签：
+
+```sh
+git push origin --delete v1.0.0
+```
+
+以上操作需要仓库同时启用 `push` 和 `tags`。
+
+## 9. 协议和资源支持
+
+Smart HTTP 支持：
+
+- `GET /info/refs?service=git-upload-pack`
+- `POST /git-upload-pack`
+- `GET /info/refs?service=git-receive-pack`
+- `POST /git-receive-pack`
+- upload-pack 的 Git protocol v0/v1/v2 协商
+- Git 自身支持的 SHA-1 或 SHA-256 仓库格式
+
+Dumb HTTP 支持：
 
 - `HEAD`
 - `info/refs`
@@ -219,65 +295,119 @@ git update-server-info
 - `objects/info/alternates`
 - `objects/info/http-alternates`
 - loose objects
-- pack 文件
-- pack index 文件
-- loose refs
-- packed refs
-- packed annotated tag 的 peeled refs
+- pack 文件和 pack index
+- loose refs、packed refs、packed annotated tag 的 peeled refs
+- SHA-1 和 SHA-256 长度的对象名称
 
-当前限制：
+Smart HTTP 的具体协商、对象校验、fast-forward 规则和仓库 hooks 由服务器安装的 Git 版本负责。
 
-- 只读，不支持 push
-- 不支持 Git Smart HTTP
-- 只支持 SHA-1 格式仓库
-- 不支持 SHA-256 object-format 仓库
-- 不提供身份认证和授权功能
+## 10. 验证部署
 
-如需限制访问，请在 Apache、反向代理或其他外层服务中配置 HTTPS 和身份认证。
+### PHP 语法
 
-## 9. 常见问题
+```sh
+php -l index.php
+php -l config.php
 
-### `git clone` 返回 404
+for file in lib/*.php operations/*.php; do
+    php -l "$file"
+done
+```
+
+### 查看远程 refs
+
+```sh
+git ls-remote https://git.example.com/php-git-server/project.git
+```
+
+输出通常包括 `HEAD`、`refs/heads/*` 和 `refs/tags/*`。
+
+### 端到端回归
+
+建议在临时仓库上依次验证：
+
+1. `git clone`。
+2. 创建提交并 `git push origin main`。
+3. 创建并 push 新分支。
+4. 创建并 push annotated tag。
+5. 在另一个工作目录执行 `git fetch --all --tags` 和 `git pull`。
+6. 删除测试分支和标签。
+7. 确认未启用 `other_refs` 时，推送到 `refs/notes/*` 返回 `403`。
+
+### HTTP 状态码
+
+不存在的资源应返回 `404`：
+
+```sh
+curl -i https://git.example.com/php-git-server/project.git/not-found
+```
+
+方法不匹配应返回 `405` 和 `Allow`：
+
+```sh
+curl -i -X POST https://git.example.com/php-git-server/project.git/HEAD
+```
+
+push 未启用或 ref 命名空间被禁止时应返回 `403`。
+
+## 11. 常见问题
+
+### clone / pull 返回 503
+
+检查：
+
+1. `$git_executable` 是否指向可执行的 Git。
+2. Web 服务器进程的 `PATH` 是否包含 Git。
+3. PHP 是否允许 `proc_open`。
+4. Web 服务器进程是否可读取仓库。
+
+若 Git 不可用，服务会尝试提供 Dumb HTTP；但 packed/alternates 等特殊仓库布局仍应通过实际 clone 测试。
+
+### push 返回 403
 
 依次检查：
 
-1. `$url_base` 是否与部署路径完全一致。
-2. `$repos` 中的公开路径是否以 `/` 开头。
-3. Apache 是否启用了 `mod_rewrite`。
-4. Apache 是否允许 `.htaccess` 使用 `RewriteRule`。
-5. 仓库路径是否存在，且 PHP 进程是否有读取权限。
-6. 仓库地址是否包含配置中的 `.git` 后缀。
+1. 仓库是否设置 `'push' => TRUE`。
+2. `require_auth` 为 `TRUE` 时，Web 服务器是否设置了可信 `REMOTE_USER`。
+3. 分支更新是否启用了 `branches`。
+4. 标签更新是否启用了 `tags`。
+5. 目标是否属于其他 ref 命名空间，而 `other_refs` 仍为 `FALSE`。
 
-### 浏览器可以访问，但 Git 克隆失败
+### push 返回 500 或远端断开
 
-使用下面的命令查看 Git 的 HTTP 请求过程：
+检查 PHP/Apache 错误日志、Git hooks 输出、仓库写权限、磁盘空间和临时目录空间。还应确认 `max_request_bytes` 没有设置得过小。
+
+### non-fast-forward 被拒绝
+
+这是 Git receive-pack 的正常保护。先同步远程提交，或在明确了解影响时使用受控的 force push：
+
+```sh
+git push --force-with-lease origin main
+```
+
+仓库本地配置和 hooks 仍可进一步禁止 force push、删除或特定提交。
+
+### 浏览器可以访问，但 Git 操作失败
+
+开启客户端跟踪：
 
 ```sh
 GIT_TRACE=1 GIT_CURL_VERBOSE=1 git clone \
     https://git.example.com/php-git-server/project.git
 ```
 
-重点检查 `/info/refs`、`/HEAD`、loose object 或 pack 文件请求是否返回了正确的 `200`、`404` 和内容类型。
+重点检查 `info/refs`、`git-upload-pack`、`git-receive-pack` 的 HTTP 状态、内容类型和认证过程。
 
-### 返回 500
+## 12. 安全建议
 
-检查 Apache/PHP 错误日志，并确认：
-
-- `config.php` PHP 语法正确。
-- `$repos` 已定义为数组。
-- 仓库目录可读取。
-- PHP 未被 `open_basedir` 等配置禁止访问仓库目录。
-
-### 仓库可以读取，但无法 push
-
-这是预期行为。本项目是只读 Dumb HTTP 服务。请通过 SSH、文件路径、部署脚本或其他具备写入能力的服务更新仓库。
-
-## 10. 安全建议
-
-- 使用 HTTPS，避免 Git 内容和认证信息通过明文 HTTP 传输。
-- 不要将 `config.php` 提交到公共版本库。
-- 仓库路径应明确配置，不要根据 URL 动态拼接任意文件系统路径。
-- Web 服务器只应具有必要的读取权限。
-- 不要在仓库中保存不希望通过 Git 下载的敏感内容。
-- 如需私有仓库，在 Apache或反向代理层配置认证和访问控制。
-- 确保 `.htaccess` 生效，避免 Web 服务器绕过 `index.php` 直接提供仓库内部文件。
+- 对所有生产流量使用 HTTPS。
+- push 默认保持关闭，只为确实需要写入的仓库启用。
+- 使用 Apache、反向代理或统一身份系统完成真实认证。
+- 不要把用户自行提供的 HTTP 头直接映射成可信 `REMOTE_USER`。
+- 仓库路径必须显式配置，不根据 URL 拼接任意文件系统路径。
+- 只给 Web 服务器最小必要的文件权限。
+- 将 `other_refs` 保持为 `FALSE`，除非确实需要 notes、replace 或自定义 refs。
+- 使用 `max_request_bytes`、Web 服务器请求体限制和磁盘配额防止超大 push。
+- 审查仓库 hooks；push 会执行 receive-pack hooks。
+- 不提交 `config.php`，也不要把敏感信息写入 Git 历史。
+- 确保 `.htaccess` 或等价的虚拟主机规则生效，避免绕过 `index.php`。

@@ -1,9 +1,31 @@
 <?php
 
-/* Base url of this app */
+/* Base URL path of this app. Use an empty string when deployed at / . */
 $url_base = '/php-git-server';
 
-/* Repositories */
+/* Git executable used by Smart HTTP clone, pull and push. */
+$git_executable = 'git';
+
+/*
+ * Repository options:
+ *
+ * read              Allow clone, fetch and pull. Default: TRUE.
+ * push              Allow Smart HTTP push. Default: FALSE.
+ * require_auth      Require a trusted REMOTE_USER for push. Default: TRUE.
+ * branches          Allow push updates under refs/heads/. Default: TRUE.
+ * tags              Allow push updates under refs/tags/. Default: TRUE.
+ * other_refs        Allow push updates to other ref namespaces. Default: FALSE.
+ * max_request_bytes Maximum buffered push request size; 0 is unlimited.
+ */
 $repos = array(
-    array('/php-git-server.git', '.git'),
-    array('/wiki.git', '/home/jon/Wiki/.git'));
+    array('/php-git-server.git', '.git', array(
+        'read' => TRUE,
+        'push' => FALSE)),
+    array('/wiki.git', '/srv/git/wiki.git', array(
+        'read' => TRUE,
+        'push' => TRUE,
+        'require_auth' => TRUE,
+        'branches' => TRUE,
+        'tags' => TRUE,
+        'other_refs' => FALSE,
+        'max_request_bytes' => 0)));
