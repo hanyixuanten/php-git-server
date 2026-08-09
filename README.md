@@ -3,7 +3,8 @@ PHP Git server
 
 This project serves configured Git repositories through PHP. It supports:
 
-- Dumb HTTP reads for compatibility.
+- Pure-PHP Smart HTTP clone, fetch, pull and push for SHA-1 repositories.
+- Dumb HTTP reads for compatibility and pure-PHP bare-repository creation.
 - Smart HTTP `upload-pack` for clone, fetch and pull.
 - Smart HTTP `receive-pack` for push.
 - Remote branch and tag creation, update and deletion through push.
@@ -21,12 +22,16 @@ Requirements
 
 - PHP 7.4 or newer.
 - Apache with `mod_rewrite` and `.htaccess` enabled for normal deployment.
-- Git installed on the server for Smart HTTP clone/pull and all push support.
-- PHP `proc_open` enabled for Smart HTTP.
+- PHP zlib and hash extensions for the native Git protocol implementation.
+- Git and PHP `proc_open` are optional; when available, Git remains the Smart
+    HTTP backend for full protocol and hook compatibility.
 - Read access to published repositories; write access is also required for push
     and for the managed repository directory when home-page creation is enabled.
 
-If Git or `proc_open` is unavailable, read-only Dumb HTTP remains available.
+If Git or `proc_open` is unavailable, the native PHP backend supports ordinary
+SHA-1 clone, fetch, pull and push, including deltas, branches and tags. It does
+not currently support SHA-256 repositories, shallow or filtered fetches, signed
+push certificates, Git hooks or protocol v2-only features.
 Push is disabled by default and should be enabled only behind HTTPS and trusted
 web-server authentication.
 

@@ -21,6 +21,9 @@ function repository_default_options() {
         'branches' => TRUE,
         'tags' => TRUE,
         'other_refs' => FALSE,
+        'allow_non_fast_forward' => FALSE,
+        'max_object_bytes' => 268435456,
+        'max_pack_objects' => 100000,
         'max_request_bytes' => 0);
 }
 

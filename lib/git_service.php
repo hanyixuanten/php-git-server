@@ -27,9 +27,55 @@ function git_service_executable_available($application) {
     return FALSE;
 }
 
+function git_service_native_available() {
+    return function_exists('inflate_init')
+        && function_exists('inflate_add')
+        && function_exists('inflate_get_read_len')
+        && function_exists('gzcompress')
+        && function_exists('hash')
+        && in_array('sha1', hash_algos(), TRUE);
+}
+
+function git_service_write_repository_file($path, $contents) {
+    return @file_put_contents($path, $contents, LOCK_EX) === strlen($contents);
+}
+
+function git_service_init_bare_repository_with_php($path) {
+    $directories = array(
+        '',
+        '/branches',
+        '/hooks',
+        '/info',
+        '/objects',
+        '/objects/info',
+        '/objects/pack',
+        '/refs',
+        '/refs/heads',
+        '/refs/tags');
+
+    foreach ($directories as $directory) {
+        if (!@mkdir($path.$directory, 0777) && !is_dir($path.$directory)) {
+            return FALSE;
+        }
+    }
+
+    $files = array(
+        '/HEAD' => "ref: refs/heads/main\n",
+        '/config' => "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n",
+        '/description' => "Unnamed repository; edit this file 'description' to name the repository.\n");
+
+    foreach ($files as $name => $contents) {
+        if (!git_service_write_repository_file($path.$name, $contents)) {
+            return FALSE;
+        }
+    }
+
+    return TRUE;
+}
+
 function git_service_init_bare_repository($application, $path) {
     if (!function_exists('proc_open') || !git_service_executable_available($application)) {
-        return FALSE;
+        return git_service_init_bare_repository_with_php($path);
     }
 
     $error = @tmpfile();
@@ -88,10 +134,6 @@ function git_service_create_managed_repository($application, $configuration, $va
     $root = managed_repository_root($configuration);
     if ($root === FALSE || !is_writable($root) || @scandir($root) === FALSE) {
         return array('status' => 'root_unavailable');
-    }
-
-    if (!function_exists('proc_open') || !git_service_executable_available($application)) {
-        return array('status' => 'git_unavailable');
     }
 
     $path = $root.DIRECTORY_SEPARATOR.$name;
@@ -352,9 +394,31 @@ function git_service_run(
 }
 
 function git_service_advertise($application, $repository, $request, $service) {
+    if ((!function_exists('proc_open') || !git_service_executable_available($application))
+        && !git_service_native_available()) {
+        send_error(503, 'Service Unavailable', 'The native Git service requires PHP zlib and hash support.');
+    }
+
     header_nocache();
     header('Content-Type: application/x-'.$service.'-advertisement');
     header('X-Content-Type-Options: nosniff');
+
+    if ((!function_exists('proc_open') || !git_service_executable_available($application))
+        && $service === 'git-upload-pack') {
+        echo format_packet_line('# service='.$service."\n").'0000';
+        if (!git_upload_pack_advertise_native($repository)) {
+            error_log('Native Git advertisement failed for '.$repository['url'].'.');
+        }
+        return;
+    }
+    if ((!function_exists('proc_open') || !git_service_executable_available($application))
+        && $service === 'git-receive-pack') {
+        echo format_packet_line('# service='.$service."\n").'0000';
+        if (!git_receive_pack_advertise_native($repository)) {
+            error_log('Native Git receive advertisement failed for '.$repository['url'].'.');
+        }
+        return;
+    }
 
     $prefix = '';
     if (!git_service_is_protocol_v2($request)) {
@@ -365,9 +429,29 @@ function git_service_advertise($application, $repository, $request, $service) {
 }
 
 function git_service_rpc($application, $repository, $request, $service, $input) {
+    if ((!function_exists('proc_open') || !git_service_executable_available($application))
+        && !git_service_native_available()) {
+        send_error(503, 'Service Unavailable', 'The native Git service requires PHP zlib and hash support.');
+    }
+
     header_nocache();
     header('Content-Type: application/x-'.$service.'-result');
     header('X-Content-Type-Options: nosniff');
+
+    if ((!function_exists('proc_open') || !git_service_executable_available($application))
+        && $service === 'git-upload-pack') {
+        if (!git_upload_pack_rpc_native($repository, $input)) {
+            error_log('Native Git upload-pack failed for '.$repository['url'].'.');
+        }
+        return;
+    }
+    if ((!function_exists('proc_open') || !git_service_executable_available($application))
+        && $service === 'git-receive-pack') {
+        if (!git_receive_pack_rpc_native($repository, $input)) {
+            error_log('Native Git receive-pack failed for '.$repository['url'].'.');
+        }
+        return;
+    }
 
     git_service_run($application, $repository, $request, $service, FALSE, $input);
 }

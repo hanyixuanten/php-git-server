@@ -2,12 +2,12 @@
 
 本项目通过 PHP 发布显式配置的 Git 仓库，同时支持 **Dumb HTTP** 与 **Smart HTTP**：
 
-- `clone`：支持 Smart HTTP；服务器没有 Git/`proc_open` 时可回退到只读 Dumb HTTP。
+- `clone`：支持 Smart HTTP；服务器没有 Git/`proc_open` 时由 PHP 原生 upload-pack 提供，也保留 Dumb HTTP 兼容路径。
 - `pull` / `fetch`：通过 `git-upload-pack --stateless-rpc` 提供。
-- `push`：通过 `git-receive-pack --stateless-rpc` 提供，默认关闭。
+- `push`：有 Git 时通过 `git-receive-pack --stateless-rpc` 提供；无 Git 时由 PHP 原生 receive-pack 提供，默认关闭。
 - `branch`：远程分支以 `refs/heads/*` 表示，可通过 push 创建、更新和删除。
 - `tag`：远程标签以 `refs/tags/*` 表示，可通过 push 创建、更新和删除。
-- `create`：可从主界面创建受控目录内的 bare 仓库。
+- `create`：可从主界面创建受控目录内的 bare 仓库；Git 不可用时由 PHP 直接初始化。
 
 Git 协议不会向服务器发送名为“branch”或“tag”的独立命令：本地 `git branch`、`git tag` 不访问服务器；远程分支和标签通过 fetch/pull 获取，通过 push 更新。
 
@@ -41,7 +41,9 @@ operations/tag.php        refs/tags/* 标签更新规则
 
 项目没有 Composer 依赖，也不需要构建。
 
-仅使用 Dumb HTTP 只读功能时，服务器可以不安装 Git；但 push 一定需要 Git。若 PHP 配置通过 `disable_functions` 禁用了 `proc_open`，Smart HTTP 也不可用。
+服务器可以不安装 Git。Git 或 `proc_open` 不可用时，应用使用纯 PHP 实现的 Smart HTTP 服务端协议，支持普通 SHA-1 仓库的 clone、fetch、pull、push、delta、分支和标签；PHP 必须启用 zlib 与 hash 扩展。
+
+原生 PHP 后端当前不支持 SHA-256 仓库、shallow clone、partial clone/filter、push certificate、Git hooks 和仅 protocol v2 提供的功能。需要这些能力时仍应安装 Git 并允许 `proc_open`。
 
 ## 3. 安装
 
@@ -171,6 +173,7 @@ $managed_repositories = array(
 - 设置 `$managed_repositories = array();` 可完全关闭主界面创建功能。
 - 仓库名称仅允许字母、数字、点、短横线和下划线，长度最多 64 个字符；`.git` 后缀可省略。
 - 新仓库是 bare 仓库，默认分支为 `main`。应用内的创建请求使用锁、暂存目录和原子改名，不会互相覆盖；托管目录不应由其他进程同时写入。
+- Git 或 `proc_open` 不可用时，应用以纯 PHP 创建标准 SHA-1 格式的空 bare 仓库；之后可以通过 Dumb HTTP clone，但首次写入仍需在其他具备 Git 的环境中生成仓库内容并同步到服务器。
 
 静态 `$repos` 条目与托管目录中的仓库 URL 冲突时，以静态条目为准。生产环境应让创建页面受到 Web 服务器认证保护，并保持顶层 `require_auth => TRUE`；表单本身还使用会话 CSRF 令牌。
 
@@ -186,6 +189,9 @@ $managed_repositories = array(
 | `branches` | `TRUE` | 允许更新 `refs/heads/*` |
 | `tags` | `TRUE` | 允许更新 `refs/tags/*` |
 | `other_refs` | `FALSE` | 允许 notes、replace 等其他 ref 命名空间 |
+| `allow_non_fast_forward` | `FALSE` | 原生 PHP 后端是否允许强制改写远程分支 |
+| `max_object_bytes` | `268435456` | 原生 PHP 后端允许的单个解压对象最大字节数 |
+| `max_pack_objects` | `100000` | 原生 PHP 后端一次 push pack 允许的最大对象数 |
 | `max_request_bytes` | `0` | push 请求最大字节数；`0` 表示不限制 |
 
 `branches`、`tags` 和 `other_refs` 只控制 push 更新，不会隐藏已经存在的 refs。若要限制读取内容，应发布不同的仓库，而不是依赖 ref 更新选项。
@@ -358,7 +364,7 @@ Dumb HTTP 支持：
 - loose refs、packed refs、packed annotated tag 的 peeled refs
 - SHA-1 和 SHA-256 长度的对象名称
 
-Smart HTTP 的具体协商、对象校验、fast-forward 规则和仓库 hooks 由服务器安装的 Git 版本负责。
+安装 Git 时，Smart HTTP 的具体协商、对象校验、fast-forward 规则和仓库 hooks 由服务器 Git 负责。无 Git 时，PHP 后端执行 SHA-1 对象哈希、pack 校验、OFS/REF delta、对象连通性、ref 锁和默认 fast-forward 检查，但不会执行 hooks。
 
 ## 10. 验证部署
 
@@ -420,7 +426,7 @@ push 未启用或 ref 命名空间被禁止时应返回 `403`。
 3. PHP 是否允许 `proc_open`。
 4. Web 服务器进程是否可读取仓库。
 
-若 Git 不可用，服务会尝试提供 Dumb HTTP；但 packed/alternates 等特殊仓库布局仍应通过实际 clone 测试。
+若 Git 不可用，服务使用原生 PHP Smart HTTP 后端。确认 PHP 启用了 zlib 与 hash，并确认仓库是 SHA-1 格式；浅克隆、filter、SHA-256 或 hooks 需求必须改用 Git 后端。
 
 ### push 返回 403
 

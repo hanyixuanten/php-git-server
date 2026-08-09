@@ -22,14 +22,6 @@ function pull_require_read_access($repository) {
 
 function pull_advertise_upload_pack($repository, $request, $application) {
     pull_require_read_access($repository);
-
-    if (!function_exists('proc_open') || !git_service_executable_available($application)) {
-        $dumb_request = $request;
-        unset($dumb_request['query']['service']);
-        clone_get_info_refs($repository, $dumb_request, $application);
-        return;
-    }
-
     git_service_advertise($application, $repository, $request, 'git-upload-pack');
 }
 

@@ -6,7 +6,9 @@
 $url_base = '';
 
 
-/* Git executable used by Smart HTTP clone, pull and push. */
+/* Git executable used by Smart HTTP when available. If it is unavailable,
+ * supported SHA-1 Smart HTTP operations run through the native PHP backend. */
+
 $git_executable = 'git';
 
 /*
@@ -27,6 +29,9 @@ $managed_repositories = array(
         'branches' => TRUE,
         'tags' => TRUE,
         'other_refs' => FALSE,
+        'allow_non_fast_forward' => FALSE,
+        'max_object_bytes' => 268435456,
+        'max_pack_objects' => 100000,
         'max_request_bytes' => 0));
 
 /*
@@ -38,6 +43,9 @@ $managed_repositories = array(
  * branches          Allow push updates under refs/heads/. Default: TRUE.
  * tags              Allow push updates under refs/tags/. Default: TRUE.
  * other_refs        Allow push updates to other ref namespaces. Default: FALSE.
+ * allow_non_fast_forward Allow forced branch rewrites. Default: FALSE.
+ * max_object_bytes  Maximum inflated object size for native PHP push.
+ * max_pack_objects  Maximum object count in a native PHP push pack.
  * max_request_bytes Maximum buffered push request size; 0 is unlimited.
  */
 $repos = array(
