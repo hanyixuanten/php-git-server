@@ -23,7 +23,7 @@ Also test unsupported paths and methods: they must return `404` and `405` respec
 
 ## Coding Style & Naming Conventions
 
-Match the existing PHP style: four-space indentation, opening braces on the same line as declarations, single-quoted strings unless interpolation is needed, and lowercase snake_case function names (for example, `get_packed_refs`). Keep request handlers small and add a matching entry to `$services` for each supported endpoint. Preserve the existing compatibility-oriented syntax (`array(...)`, not short arrays) unless a deliberate project-wide modernization is proposed.
+Match the existing PHP style: four-space indentation, opening braces on the same line as declarations, single-quoted strings unless interpolation is needed, and lowercase snake_case function names (for example, `get_packed_refs`). Keep request handlers small and add a matching entry to `$services` for each supported endpoint. Preserve the existing compatibility-oriented syntax (`array(...)`, not short arrays) unless a deliberate project-wide modernization is proposed. When adding new functionality, update `usage.md` so that its Chinese installation, configuration, supported-feature, and usage instructions remain accurate.
 
 ## Testing Guidelines
 
