@@ -7,6 +7,7 @@
 - `push`：通过 `git-receive-pack --stateless-rpc` 提供，默认关闭。
 - `branch`：远程分支以 `refs/heads/*` 表示，可通过 push 创建、更新和删除。
 - `tag`：远程标签以 `refs/tags/*` 表示，可通过 push 创建、更新和删除。
+- `create`：可从主界面创建受控目录内的 bare 仓库。
 
 Git 协议不会向服务器发送名为“branch”或“tag”的独立命令：本地 `git branch`、`git tag` 不访问服务器；远程分支和标签通过 fetch/pull 获取，通过 push 更新。
 
@@ -94,6 +95,19 @@ https://git.example.com/php-git-server/
 $url_base = '/php-git-server';
 $git_executable = 'git';
 
+$managed_repositories = array(
+    'path' => '/srv/git',
+    'require_auth' => TRUE,
+    'session_cookie_secure' => TRUE,
+    'options' => array(
+        'read' => TRUE,
+        'push' => TRUE,
+        'require_auth' => TRUE,
+        'branches' => TRUE,
+        'tags' => TRUE,
+        'other_refs' => FALSE,
+        'max_request_bytes' => 0));
+
 $repos = array(
     array('/project.git', '/srv/git/project.git', array(
         'read' => TRUE,
@@ -136,6 +150,30 @@ array('/self.git', '.git')
 
 推荐生产环境使用明确的绝对路径和 bare 仓库。
 
+### 从主界面创建仓库
+
+`$managed_repositories` 用于启用主界面的创建入口。其 `path` 必须是已经存在、由 PHP/Web 服务器进程可读、可写且可进入的目录，并应由本应用独占；应用只会发现该目录直属的、名称以 `.git` 结尾的 bare 仓库，不递归扫描，也不会改写 `config.php`。
+
+```php
+$managed_repositories = array(
+    'path' => '/srv/git',
+    'require_auth' => TRUE,
+    'session_cookie_secure' => TRUE,
+    'options' => array(
+        'read' => TRUE,
+        'push' => TRUE,
+        'require_auth' => TRUE));
+```
+
+- 顶层 `require_auth` 控制谁能从主界面创建仓库，默认是 `TRUE`。
+- `session_cookie_secure` 控制创建表单会话 Cookie 的 Secure 属性。应用直连 HTTPS 时会自动识别；TLS 在可信反向代理终止时应显式设为 `TRUE`，并确保外部流量只能通过 HTTPS 访问。
+- `options` 是所有主界面新建仓库共同继承的仓库选项，其含义与 `$repos` 条目相同。
+- 设置 `$managed_repositories = array();` 可完全关闭主界面创建功能。
+- 仓库名称仅允许字母、数字、点、短横线和下划线，长度最多 64 个字符；`.git` 后缀可省略。
+- 新仓库是 bare 仓库，默认分支为 `main`。应用内的创建请求使用锁、暂存目录和原子改名，不会互相覆盖；托管目录不应由其他进程同时写入。
+
+静态 `$repos` 条目与托管目录中的仓库 URL 冲突时，以静态条目为准。生产环境应让创建页面受到 Web 服务器认证保护，并保持顶层 `require_auth => TRUE`；表单本身还使用会话 CSRF 令牌。
+
 ## 5. 仓库选项
 
 每个 `$repos` 条目的第三项是选项数组。未提供第三项的旧配置仍可使用，并保持“允许读取、禁止 push”的安全默认值。
@@ -169,6 +207,19 @@ push 请求会先写入系统临时目录，以便在交给 `git-receive-pack` �
 </LocationMatch>
 ```
 
+启用主界面创建时，还必须让认证覆盖应用首页。例如保护整个应用路径：
+
+```apache
+<Location "/php-git-server/">
+    AuthType Basic
+    AuthName "Git server"
+    AuthUserFile /etc/apache2/git.htpasswd
+    Require valid-user
+</Location>
+```
+
+如果只希望认证创建入口而允许匿名 clone，可在 Web 服务器中按请求方法和路径制定更细的规则，但必须确认首页 `POST` 最终能向 PHP 提供可信的 `REMOTE_USER`。
+
 生产环境必须配合 HTTPS。也可以使用反向代理、单点登录或其他认证模块，但需要确认认证结果最终以可信的 `REMOTE_USER` 传给 PHP。
 
 如果设置：
@@ -186,6 +237,14 @@ push 请求会先写入系统临时目录，以便在交给 `git-receive-pack` �
 ```sh
 git init --bare /srv/git/project.git
 ```
+
+启用主界面创建时，应先创建并授权整个托管目录，例如：
+
+```sh
+sudo install -d -o git -g www-data -m 2770 /srv/git
+```
+
+这里的用户和组只是示例，应按 PHP/Web 服务器的实际运行身份调整。
 
 只读仓库只需要让 Apache/PHP 用户可读取目录和文件。启用 push 时，运行 PHP 的用户必须能够创建和修改 objects、refs、日志及锁文件。例如可把仓库交给专用组管理：
 
@@ -402,9 +461,10 @@ GIT_TRACE=1 GIT_CURL_VERBOSE=1 git clone \
 
 - 对所有生产流量使用 HTTPS。
 - push 默认保持关闭，只为确实需要写入的仓库启用。
+- 主界面创建默认要求可信的 `REMOTE_USER`，托管目录不要放置其他文件。
 - 使用 Apache、反向代理或统一身份系统完成真实认证。
 - 不要把用户自行提供的 HTTP 头直接映射成可信 `REMOTE_USER`。
-- 仓库路径必须显式配置，不根据 URL 拼接任意文件系统路径。
+- 仓库路径必须来自静态配置或受控托管目录，不根据 URL 拼接任意文件系统路径。
 - 只给 Web 服务器最小必要的文件权限。
 - 将 `other_refs` 保持为 `FALSE`，除非确实需要 notes、replace 或自定义 refs。
 - 使用 `max_request_bytes`、Web 服务器请求体限制和磁盘配额防止超大 push。

@@ -7,6 +7,26 @@ $url_base = '/php-git-server';
 $git_executable = 'git';
 
 /*
+ * Optional directory for repositories created from the home page.
+ * The directory must already exist and be readable, writable and searchable by
+ * the PHP process, and should be reserved for this application.
+ * Set this to array() to disable repository creation.
+ */
+$managed_repositories = array(
+    'path' => '/srv/git',
+    'require_auth' => TRUE,
+    /* Uncomment when TLS ends at a trusted reverse proxy. */
+    // 'session_cookie_secure' => TRUE,
+    'options' => array(
+        'read' => TRUE,
+        'push' => TRUE,
+        'require_auth' => TRUE,
+        'branches' => TRUE,
+        'tags' => TRUE,
+        'other_refs' => FALSE,
+        'max_request_bytes' => 0));
+
+/*
  * Repository options:
  *
  * read              Allow clone, fetch and pull. Default: TRUE.

@@ -27,6 +27,127 @@ function git_service_executable_available($application) {
     return FALSE;
 }
 
+function git_service_init_bare_repository($application, $path) {
+    if (!function_exists('proc_open') || !git_service_executable_available($application)) {
+        return FALSE;
+    }
+
+    $error = @tmpfile();
+    if ($error === FALSE) {
+        return FALSE;
+    }
+
+    $descriptor_spec = array(
+        0 => array('file', '/dev/null', 'r'),
+        1 => array('file', '/dev/null', 'w'),
+        2 => $error);
+    $pipes = array();
+    $command = array(
+        $application['git_executable'],
+        'init',
+        '--bare',
+        '--quiet',
+        $path);
+    $request = array('git_protocol' => NULL, 'user' => get_authenticated_user());
+    $process = @proc_open(
+        $command,
+        $descriptor_spec,
+        $pipes,
+        dirname($path),
+        git_service_environment($request));
+
+    if (!is_resource($process)) {
+        fclose($error);
+        return FALSE;
+    }
+
+    $exit_code = proc_close($process);
+    if ($exit_code !== 0) {
+        rewind($error);
+        $message = stream_get_contents($error);
+        error_log(
+            'Git repository initialization failed for '.$path.' with exit code '
+            .$exit_code.': '.trim($message));
+    }
+
+    fclose($error);
+    if ($exit_code !== 0) {
+        return FALSE;
+    }
+
+    $head = "ref: refs/heads/main\n";
+    return @file_put_contents($path.'/HEAD', $head, LOCK_EX) === strlen($head);
+}
+
+function git_service_create_managed_repository($application, $configuration, $value) {
+    $name = normalize_managed_repository_name($value);
+    if ($name === FALSE) {
+        return array('status' => 'invalid_name');
+    }
+
+    $root = managed_repository_root($configuration);
+    if ($root === FALSE || !is_writable($root) || @scandir($root) === FALSE) {
+        return array('status' => 'root_unavailable');
+    }
+
+    if (!function_exists('proc_open') || !git_service_executable_available($application)) {
+        return array('status' => 'git_unavailable');
+    }
+
+    $path = $root.DIRECTORY_SEPARATOR.$name;
+    if (file_exists($path) || is_link($path)) {
+        return array('status' => 'already_exists', 'name' => $name);
+    }
+
+    $lock_path = $root.DIRECTORY_SEPARATOR.'.create.lock';
+    $lock = @fopen($lock_path, 'c+b');
+    if ($lock === FALSE) {
+        $status = file_exists($path) || is_link($path) ? 'already_exists' : 'create_failed';
+        return array('status' => $status, 'name' => $name);
+    }
+
+    if (!@flock($lock, LOCK_EX | LOCK_NB)) {
+        fclose($lock);
+        return array('status' => 'create_busy', 'name' => $name);
+    }
+
+    $temporary_path = NULL;
+    try {
+        if (file_exists($path) || is_link($path)) {
+            return array('status' => 'already_exists', 'name' => $name);
+        }
+
+        try {
+            $suffix = bin2hex(random_bytes(16));
+        } catch (Exception $exception) {
+            return array('status' => 'create_failed', 'name' => $name);
+        }
+
+        $temporary_path = $root.DIRECTORY_SEPARATOR.'.create-'.$suffix.'.tmp';
+        if (!git_service_init_bare_repository($application, $temporary_path)
+            || !managed_repository_is_bare($temporary_path)) {
+            return array('status' => 'create_failed', 'name' => $name);
+        }
+
+        if (file_exists($path) || is_link($path)) {
+            return array('status' => 'already_exists', 'name' => $name);
+        }
+
+        if (!@rename($temporary_path, $path)) {
+            return array('status' => 'create_failed', 'name' => $name);
+        }
+
+        $temporary_path = NULL;
+        return array('status' => 'created', 'name' => $name, 'path' => $path);
+    } finally {
+        if ($temporary_path !== NULL) {
+            remove_managed_repository_directory($temporary_path);
+        }
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
+}
+
 function git_service_is_protocol_v2($request) {
     if ($request['git_protocol'] === NULL) {
         return FALSE;
