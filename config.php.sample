@@ -34,11 +34,9 @@ $auth = array(
  * Set this to array() to disable repository creation.
  */
 $managed_repositories = array(
-    'require_auth' => TRUE,
     'options' => array(
         'read' => TRUE,
         'push' => TRUE,
-        'require_auth' => TRUE,
         'branches' => TRUE,
         'tags' => TRUE,
         'other_refs' => FALSE,
@@ -52,7 +50,8 @@ $managed_repositories = array(
  *
  * read              Allow clone, fetch and pull. Default: TRUE.
  * push              Allow Smart HTTP push. Default: FALSE.
- * require_auth      Require an application access token for push. Default: TRUE.
+ * owner             Account username allowed to push. Default: NULL.
+ * private           Require an access token for reads. Default: FALSE.
  * branches          Allow push updates under refs/heads/. Default: TRUE.
  * tags              Allow push updates under refs/tags/. Default: TRUE.
  * other_refs        Allow push updates to other ref namespaces. Default: FALSE.
@@ -64,5 +63,7 @@ $managed_repositories = array(
 $repos = array(
     array('/php-git-server.git', '.git', array(
         'read' => TRUE,
-        'push' => FALSE)),
+        'push' => FALSE,
+        'owner' => NULL,
+        'private' => FALSE)),
     );

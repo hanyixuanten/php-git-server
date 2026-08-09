@@ -121,11 +121,9 @@ $auth = array(
         'password' => 'replace-with-a-long-random-password'));
 
 $managed_repositories = array(
-    'require_auth' => TRUE,
     'options' => array(
         'read' => TRUE,
         'push' => TRUE,
-        'require_auth' => TRUE,
         'branches' => TRUE,
         'tags' => TRUE,
         'other_refs' => FALSE,
@@ -135,7 +133,8 @@ $repos = array(
     array('/project.git', '/srv/git/project.git', array(
         'read' => TRUE,
         'push' => TRUE,
-        'require_auth' => TRUE,
+        'owner' => 'alice',
+        'private' => TRUE,
         'branches' => TRUE,
         'tags' => TRUE,
         'other_refs' => FALSE,
@@ -179,14 +178,12 @@ array('/self.git', '.git')
 
 ```php
 $managed_repositories = array(
-    'require_auth' => TRUE,
     'options' => array(
         'read' => TRUE,
-        'push' => TRUE,
-        'require_auth' => TRUE));
+        'push' => TRUE));
 ```
 
-- 顶层 `require_auth` 控制谁能从主界面创建仓库，默认是 `TRUE`。
+- 创建仓库必须登录；当前账号自动成为仓库所有者，并可在表单中选择“公开”或“私有”。
 - 启用账号认证时，`$auth['session_cookie_secure']` 控制登录与表单共用 Session Cookie 的 Secure 属性。应用直连 HTTPS 时会自动识别；TLS 在可信反向代理终止时应显式设为 `TRUE`，并确保外部流量只能通过 HTTPS 访问。
 - `options` 是所有主界面新建仓库共同继承的仓库选项，其含义与 `$repos` 条目相同。
 - 设置 `$managed_repositories = array();` 可完全关闭主界面创建功能。
@@ -194,7 +191,7 @@ $managed_repositories = array(
 - 新仓库是 bare 仓库，默认分支为 `main`。应用内的创建请求使用锁、暂存目录和原子改名，不会互相覆盖；托管目录不应由其他进程同时写入。
 - Git 或 `proc_open` 不可用时，应用以纯 PHP 创建标准 SHA-1 格式的空 bare 仓库；之后可以通过 Dumb HTTP clone，但首次写入仍需在其他具备 Git 的环境中生成仓库内容并同步到服务器。
 
-静态 `$repos` 条目与托管目录中的仓库 URL 冲突时，以静态条目为准。生产环境应启用应用账号认证并保持顶层 `require_auth => TRUE`；仓库创建要求已登录 Session，所有修改表单还使用会话 CSRF 令牌。
+静态 `$repos` 条目与托管目录中的仓库 URL 冲突时，以静态条目为准。仓库创建要求已登录 Session，所有修改表单还使用会话 CSRF 令牌。托管仓库的所有者和可见性保存在 `pgit_repositories`；缺少元数据的旧托管仓库按私有、无所有者处理，在完成迁移前不可 push。
 
 ## 5. 仓库选项
 
@@ -204,7 +201,8 @@ $managed_repositories = array(
 | --- | --- | --- |
 | `read` | `TRUE` | 允许 clone、fetch、pull 和 Dumb HTTP 对象读取 |
 | `push` | `FALSE` | 启用 Smart HTTP receive-pack |
-| `require_auth` | `TRUE` | push 前必须提供有效的应用用户名和 Access Token |
+| `owner` | `NULL` | 允许 push 的账号用户名；未设置时任何人都不能 push |
+| `private` | `FALSE` | 是否要求有效 Access Token 才能进行任何 Git 读取 |
 | `branches` | `TRUE` | 允许更新 `refs/heads/*` |
 | `tags` | `TRUE` | 允许更新 `refs/tags/*` |
 | `other_refs` | `FALSE` | 允许 notes、replace 等其他 ref 命名空间 |
@@ -213,7 +211,7 @@ $managed_repositories = array(
 | `max_pack_objects` | `100000` | 原生 PHP 后端一次 push pack 允许的最大对象数 |
 | `max_request_bytes` | `0` | push 请求最大字节数；`0` 表示不限制 |
 
-`branches`、`tags` 和 `other_refs` 只控制 push 更新，不会隐藏已经存在的 refs。若要限制读取内容，应发布不同的仓库，而不是依赖 ref 更新选项。
+所有 push 都必须提供 access token，且 token 所属用户名必须与 `owner` 完全一致。`branches`、`tags` 和 `other_refs` 只控制 push 更新，不会隐藏已经存在的 refs。私有仓库的 Smart HTTP 与 Dumb HTTP 路径都会先验证 token，私有对象响应禁止共享缓存。
 
 push 请求会先写入系统临时目录，以便在交给 `git-receive-pack` 前检查 ref 命名空间。启用较大的 push 时，应保证 PHP 系统临时目录具有足够空间；也可以使用 `max_request_bytes` 设置上限。
 
@@ -236,17 +234,26 @@ git clone https://git.example.com/php-git-server/project.git
 git push origin main
 ```
 
-Git 收到受保护 push 的 `401` 响应后会提示输入用户名和密码。也可以使用操作系统的 Git Credential Manager 或其他安全凭据助手保存 token；不要把 token 写入远程 URL、shell 历史、仓库配置或脚本。
+Git 收到私有读取或 push 的 `401` 响应后会提示输入用户名和密码。也可以使用操作系统的 Git Credential Manager 或其他安全凭据助手保存 token；不要把 token 写入远程 URL、shell 历史、仓库配置或脚本。
 
-默认允许匿名 clone/fetch/pull；`require_auth` 当前保护 push 与主界面仓库创建。Token 验证成功后，用户名会作为 `REMOTE_USER` 传给 Git 子进程和 hooks，现有 hooks 可以继续读取该变量。
+公开仓库允许匿名 clone/fetch/pull；私有仓库只接受 access token。浏览器登录 Session 只用于首页、创建仓库和显示私有仓库列表，不能代替 Git access token。Token 验证成功后，用户名会作为 `REMOTE_USER` 传给 Git 子进程和 hooks，现有 hooks 可以继续读取该变量。
 
-如果设置：
+### 现有数据库与仓库迁移
 
-```php
-'require_auth' => FALSE
+从旧版本升级时，先执行独立迁移文件：
+
+```sh
+mysql -u root -p php_git_server < migration.repository-ownership.mysql.sql
 ```
 
-则任何能访问 URL 的用户都可 push。此设置只适合隔离的本地开发环境或已经由其他网络边界严格保护的服务。
+随后为每个已有托管仓库写入所有者和可见性，仓库名必须包含 `.git` 后缀：
+
+```sql
+INSERT INTO pgit_repositories (repository_name, owner_user_id, is_private)
+SELECT 'project.git', id, 1 FROM pgit_users WHERE username = 'alice';
+```
+
+静态 `$repos` 不写入 `pgit_repositories`，必须直接在配置中设置 `owner` 和 `private`。升级前遗留的 `require_auth` 配置不再控制访问，也不能关闭 owner/token 校验。
 
 ## 7. 创建和授权仓库
 
@@ -409,13 +416,15 @@ git ls-remote https://git.example.com/php-git-server/project.git
 
 建议在临时仓库上依次验证：
 
-1. `git clone`。
-2. 创建提交并 `git push origin main`。
-3. 创建并 push 新分支。
-4. 创建并 push annotated tag。
-5. 在另一个工作目录执行 `git fetch --all --tags` 和 `git pull`。
-6. 删除测试分支和标签。
-7. 确认未启用 `other_refs` 时，推送到 `refs/notes/*` 返回 `403`。
+1. 匿名 clone 公开仓库。
+2. 使用 access token clone 私有仓库，并确认匿名访问返回 `401`。
+3. 用 owner token 创建提交并 `git push origin main`。
+4. 确认非 owner token 的 push 返回 `403`。
+5. 创建并 push 新分支。
+6. 创建并 push annotated tag。
+7. 在另一个工作目录执行 `git fetch --all --tags` 和 `git pull`。
+8. 删除测试分支和标签。
+9. 确认未启用 `other_refs` 时，推送到 `refs/notes/*` 返回 `403`。
 
 ### HTTP 状态码
 
@@ -431,7 +440,7 @@ curl -i https://git.example.com/php-git-server/project.git/not-found
 curl -i -X POST https://git.example.com/php-git-server/project.git/HEAD
 ```
 
-受保护 push 未提供有效 token 时应返回 `401` 和 `WWW-Authenticate`；push 未启用或 ref 命名空间被禁止时应返回 `403`。
+私有仓库读取或 push 未提供有效 token 时应返回 `401` 和 `WWW-Authenticate`；非所有者 push、push 未启用或 ref 命名空间被禁止时应返回 `403`。
 
 ## 11. 常见问题
 
@@ -451,11 +460,12 @@ curl -i -X POST https://git.example.com/php-git-server/project.git/HEAD
 依次检查：
 
 1. 仓库是否设置 `'push' => TRUE`。
-2. 分支更新是否启用了 `branches`。
-3. 标签更新是否启用了 `tags`。
-4. 目标是否属于其他 ref 命名空间，而 `other_refs` 仍为 `FALSE`。
+2. access token 所属用户名是否与仓库 `owner` 完全一致。
+3. 分支更新是否启用了 `branches`。
+4. 标签更新是否启用了 `tags`。
+5. 目标是否属于其他 ref 命名空间，而 `other_refs` 仍为 `FALSE`。
 
-### push 返回 401 或反复询问密码
+### clone / pull / push 返回 401 或反复询问密码
 
 依次检查：
 
@@ -500,7 +510,7 @@ GIT_TRACE=1 GIT_CURL_VERBOSE=1 git clone \
 - push 默认保持关闭，只为确实需要写入的仓库启用。
 - 主界面创建默认要求已登录应用账号，托管目录不要放置其他文件。
 - 公开注册应配合速率限制；不需要公开注册时设置 `registration_enabled => FALSE`。
-- 数据库账号只授予 `pgit_users` 和 `pgit_access_tokens` 所需的最小读写权限，并单独备份。
+- 数据库账号只授予 `pgit_users`、`pgit_access_tokens` 和 `pgit_repositories` 所需的最小读写权限，并单独备份。
 - 定期撤销不再使用的 token；不要记录 `Authorization` 头或 token 明文。
 - 仓库路径必须来自静态配置或受控托管目录，不根据 URL 拼接任意文件系统路径。
 - 只给 Web 服务器最小必要的文件权限。

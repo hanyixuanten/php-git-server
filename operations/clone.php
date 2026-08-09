@@ -23,15 +23,7 @@ function register_clone_services(&$services) {
         'clone_get_idx_file');
 }
 
-function clone_require_read_access($repository) {
-    if (!$repository['options']['read']) {
-        send_error(403, 'Forbidden', 'Repository reads are disabled.');
-    }
-}
-
 function clone_send_local_file($type, $repository, $name) {
-    clone_require_read_access($repository);
-
     $path = get_safe_file_path($repository['path'], $name);
     if ($path === FALSE) {
         send_error(404, 'Not Found', 'Git object not found.');
@@ -52,34 +44,50 @@ function clone_send_local_file($type, $repository, $name) {
     fclose($file);
 }
 
+function clone_header_object_cache($repository) {
+    if (repository_is_private($repository)) {
+        header('Expires: Fri, 01 Jan 1980 00:00:00 GMT');
+        header('Pragma: no-cache');
+        header('Cache-Control: private, no-store, max-age=0');
+        return;
+    }
+
+    header_cache_forever();
+}
+
 function clone_get_text_file($repository, $request, $application) {
-    header_nocache();
+    repository_require_read_access($repository, $request);
+    repository_header_nocache($repository);
     clone_send_local_file('text/plain; charset=utf-8', $repository, $request['path']);
 }
 
 function clone_get_loose_object($repository, $request, $application) {
-    header_cache_forever();
+    repository_require_read_access($repository, $request);
+    clone_header_object_cache($repository);
     clone_send_local_file('application/x-git-loose-object', $repository, $request['path']);
 }
 
 function clone_get_pack_file($repository, $request, $application) {
-    header_cache_forever();
+    repository_require_read_access($repository, $request);
+    clone_header_object_cache($repository);
     clone_send_local_file('application/x-git-packed-objects', $repository, $request['path']);
 }
 
 function clone_get_idx_file($repository, $request, $application) {
-    header_cache_forever();
-    clone_send_local_file('application/x-git-packed-objects-toc', $repository, $request['path']);
+    repository_require_read_access($repository, $request);
+    clone_header_object_cache($repository);
+    clone_send_local_file(
+        'application/x-git-packed-objects-toc', $repository, $request['path']);
 }
 
 function clone_get_info_refs($repository, $request, $application) {
-    clone_require_read_access($repository);
+    repository_require_read_access($repository, $request);
 
     if (!empty($request['query'])) {
         send_error(403, 'Forbidden', 'Unsupported Git service.');
     }
 
-    header_nocache();
+    repository_header_nocache($repository);
     header('Content-Type: text/plain; charset=utf-8');
     header('X-Content-Type-Options: nosniff');
 
@@ -89,8 +97,8 @@ function clone_get_info_refs($repository, $request, $application) {
 }
 
 function clone_get_info_packs($repository, $request, $application) {
-    clone_require_read_access($repository);
-    header_nocache();
+    repository_require_read_access($repository, $request);
+    repository_header_nocache($repository);
     header('Content-Type: text/plain; charset=utf-8');
     header('X-Content-Type-Options: nosniff');
 

@@ -125,7 +125,12 @@ function git_service_init_bare_repository($application, $path) {
     return @file_put_contents($path.'/HEAD', $head, LOCK_EX) === strlen($head);
 }
 
-function git_service_create_managed_repository($application, $configuration, $value) {
+function git_service_create_managed_repository(
+    $application,
+    $configuration,
+    $value,
+    $owner_user_id,
+    $private) {
     $name = normalize_managed_repository_name($value);
     if ($name === FALSE) {
         return array('status' => 'invalid_name');
@@ -137,10 +142,6 @@ function git_service_create_managed_repository($application, $configuration, $va
     }
 
     $path = $root.DIRECTORY_SEPARATOR.$name;
-    if (file_exists($path) || is_link($path)) {
-        return array('status' => 'already_exists', 'name' => $name);
-    }
-
     $lock_path = $root.DIRECTORY_SEPARATOR.'.create.lock';
     $lock = @fopen($lock_path, 'c+b');
     if ($lock === FALSE) {
@@ -156,6 +157,20 @@ function git_service_create_managed_repository($application, $configuration, $va
     $temporary_path = NULL;
     try {
         if (file_exists($path) || is_link($path)) {
+            if (managed_repository_is_bare($path)) {
+                $recovery = auth_recover_repository_metadata(
+                    $name, (int) $owner_user_id, $private);
+                if ($recovery['status'] === 'recovered') {
+                    return array(
+                        'status' => 'created',
+                        'name' => $name,
+                        'path' => $path,
+                        'private' => (bool) $private);
+                }
+                if ($recovery['status'] === 'database_unavailable') {
+                    return array('status' => 'metadata_unavailable', 'name' => $name);
+                }
+            }
             return array('status' => 'already_exists', 'name' => $name);
         }
 
@@ -175,12 +190,30 @@ function git_service_create_managed_repository($application, $configuration, $va
             return array('status' => 'already_exists', 'name' => $name);
         }
 
+        $reservation = auth_reserve_repository_metadata(
+            $name, (int) $owner_user_id, $private);
+        if ($reservation['status'] === 'already_exists') {
+            return array('status' => 'already_exists', 'name' => $name);
+        }
+        if ($reservation['status'] !== 'reserved') {
+            return array('status' => 'metadata_unavailable', 'name' => $name);
+        }
+
         if (!@rename($temporary_path, $path)) {
             return array('status' => 'create_failed', 'name' => $name);
         }
 
         $temporary_path = NULL;
-        return array('status' => 'created', 'name' => $name, 'path' => $path);
+        if (!auth_complete_repository_metadata(
+            $reservation['id'], (int) $owner_user_id)) {
+            return array('status' => 'metadata_unavailable', 'name' => $name);
+        }
+
+        return array(
+            'status' => 'created',
+            'name' => $name,
+            'path' => $path,
+            'private' => (bool) $private);
     } finally {
         if ($temporary_path !== NULL) {
             remove_managed_repository_directory($temporary_path);
@@ -399,7 +432,7 @@ function git_service_advertise($application, $repository, $request, $service) {
         send_error(503, 'Service Unavailable', 'The native Git service requires PHP zlib and hash support.');
     }
 
-    header_nocache();
+    repository_header_nocache($repository);
     header('Content-Type: application/x-'.$service.'-advertisement');
     header('X-Content-Type-Options: nosniff');
 
@@ -434,7 +467,7 @@ function git_service_rpc($application, $repository, $request, $service, $input) 
         send_error(503, 'Service Unavailable', 'The native Git service requires PHP zlib and hash support.');
     }
 
-    header_nocache();
+    repository_header_nocache($repository);
     header('Content-Type: application/x-'.$service.'-result');
     header('X-Content-Type-Options: nosniff');
 

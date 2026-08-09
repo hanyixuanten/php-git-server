@@ -64,6 +64,7 @@ function get_access_token_user() {
 
 function require_authentication($message) {
     header('WWW-Authenticate: Basic realm="PHP Git Server", charset="UTF-8"');
+    header('Cache-Control: private, no-store, max-age=0');
     send_error(401, 'Unauthorized', $message);
 }
 

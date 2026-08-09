@@ -37,12 +37,8 @@ function home_managed_repositories_configured($configuration) {
     return is_array($configuration) && !empty($configuration);
 }
 
-function home_creation_requires_auth($configuration) {
-    return !isset($configuration['require_auth']) || $configuration['require_auth'];
-}
-
 function home_creation_is_authorized($configuration) {
-    return !home_creation_requires_auth($configuration) || get_authenticated_user() !== NULL;
+    return auth_is_enabled() && get_authenticated_user() !== NULL;
 }
 
 function home_session_cookie_is_secure($configuration) {
@@ -221,13 +217,27 @@ function home_handle_auth_action($url_base, $configuration, $action) {
     home_redirect($url_base);
 }
 
-function home_repository_url_exists($url_base, $definitions, $name) {
+function home_repository_url_conflicts($url_base, $definitions, $configuration, $name) {
     $expected_url = rtrim((string) $url_base, '/').'/'.$name;
+    $root = managed_repository_root($configuration);
+    $managed_path = $root === FALSE ? NULL : $root.DIRECTORY_SEPARATOR.$name;
     foreach ($definitions as $definition) {
         $repository = normalize_repository($definition, $url_base);
-        if ($repository !== FALSE && $repository['url'] === $expected_url) {
-            return TRUE;
+        if ($repository === FALSE || $repository['url'] !== $expected_url) {
+            continue;
         }
+
+        if ($managed_path !== NULL && $repository['path'] === $managed_path) {
+            continue;
+        }
+
+        if ($managed_path !== NULL
+            && realpath($repository['path']) !== FALSE
+            && realpath($repository['path']) === realpath($managed_path)) {
+            continue;
+        }
+
+            return TRUE;
     }
 
     return FALSE;
@@ -246,6 +256,8 @@ function home_creation_result_notice($result) {
             return array(503, 'error', '仓库存放目录不可用或不可写。');
         case 'git_unavailable':
             return array(503, 'error', 'Git 初始化服务当前不可用。');
+        case 'metadata_unavailable':
+            return array(503, 'error', '仓库所有权信息无法保存，请稍后重试。');
         default:
             return array(500, 'error', '仓库创建失败，请检查服务器日志。');
     }
@@ -264,13 +276,29 @@ function home_create_repository(
     }
     home_require_csrf($url_base, $configuration);
 
+    $owner = auth_session_user();
+    if ($owner === NULL) {
+        send_error(403, 'Forbidden', 'Login is required to create repositories.');
+    }
+
+    $visibility = home_post_value('visibility');
+    if ($visibility !== 'public' && $visibility !== 'private') {
+        send_error(422, 'Unprocessable Content', 'Repository visibility is invalid.');
+    }
+
     $value = isset($_POST['repository_name']) && is_string($_POST['repository_name'])
         ? $_POST['repository_name'] : '';
     $name = normalize_managed_repository_name($value);
-    if ($name !== FALSE && home_repository_url_exists($url_base, $definitions, $name)) {
+    if ($name !== FALSE
+        && home_repository_url_conflicts($url_base, $definitions, $configuration, $name)) {
         $result = array('status' => 'already_exists', 'name' => $name);
     } else {
-        $result = git_service_create_managed_repository($application, $configuration, $value);
+        $result = git_service_create_managed_repository(
+            $application,
+            $configuration,
+            $value,
+            $owner['id'],
+            $visibility === 'private');
     }
 
     if ($result['status'] === 'created') {
@@ -287,7 +315,8 @@ function home_create_repository(
         $definitions,
         $configuration,
         array('type' => $notice[1], 'message' => $notice[2]),
-        $value);
+        $value,
+        $visibility);
     die();
 }
 
@@ -295,12 +324,17 @@ function home_repository_url_cmp($left, $right) {
     return strcmp($left['url'], $right['url']);
 }
 
-function home_visible_repositories($url_base, $definitions) {
-    $repositories = array();
+function home_visible_repositories($url_base, $definitions, $include_private) {
+    $repositories = array('public' => array(), 'private' => array());
 
     foreach ($definitions as $definition) {
         $repository = normalize_repository($definition, $url_base);
         if ($repository === FALSE || !$repository['options']['read']) {
+            continue;
+        }
+
+        $visibility = repository_is_private($repository) ? 'private' : 'public';
+        if ($visibility === 'private' && !$include_private) {
             continue;
         }
 
@@ -310,10 +344,11 @@ function home_visible_repositories($url_base, $definitions) {
         }
 
         $repository['path'] = $git_path;
-        $repositories[] = $repository;
+        $repositories[$visibility][] = $repository;
     }
 
-    usort($repositories, 'home_repository_url_cmp');
+    usort($repositories['public'], 'home_repository_url_cmp');
+    usort($repositories['private'], 'home_repository_url_cmp');
     return $repositories;
 }
 
@@ -398,10 +433,21 @@ p { margin: 0 0 1rem; }
 .account .credentials { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; flex: 1; }
 .field { flex: 1 1 22rem; }
 label { display: block; margin-bottom: .3rem; font-weight: 600; }
-input { box-sizing: border-box; width: 100%; min-height: 2.6rem; padding: .5rem .7rem;
+input:not([type="radio"]) { box-sizing: border-box; width: 100%; min-height: 2.6rem; padding: .5rem .7rem;
     border: 1px solid #9ba4b0; border-radius: .35rem; background: #fff; color: #1f2530;
     font: inherit; }
-input:focus { border-color: #1769aa; outline: 2px solid #1769aa; outline-offset: 1px; }
+input:not([type="radio"]):focus { border-color: #1769aa; outline: 2px solid #1769aa; outline-offset: 1px; }
+.visibility { flex: 0 0 13rem; margin: 0; padding: 0; border: 0; }
+.visibility legend { margin-bottom: .3rem; font-weight: 600; }
+.visibility-options { display: grid; grid-template-columns: 1fr 1fr; min-height: 2.6rem;
+    overflow: hidden; border: 1px solid #9ba4b0; border-radius: .35rem; }
+.visibility-option { position: relative; margin: 0; font-weight: 500; }
+.visibility-option + .visibility-option { border-left: 1px solid #9ba4b0; }
+.visibility-option input { position: absolute; opacity: 0; }
+.visibility-option span { display: flex; height: 100%; align-items: center; justify-content: center;
+    padding: 0 .75rem; cursor: pointer; }
+.visibility-option input:checked + span { color: #fff; background: #176b43; }
+.visibility-option input:focus-visible + span { outline: 2px solid #1769aa; outline-offset: -3px; }
 button { min-height: 2.6rem; padding: .5rem 1rem; border: 1px solid #175b3a;
     border-radius: .35rem; color: #fff; background: #176b43; font: inherit;
     font-weight: 600; cursor: pointer; }
@@ -420,6 +466,8 @@ button:hover { background: #125635; }
 .notice-success { border-color: #1f7a4b; background: #edf8f1; color: #155735; }
 .notice-error { border-color: #b33a3a; background: #fff0f0; color: #842828; }
 table { width: 100%; border-collapse: collapse; }
+.repositories { margin-top: 2.5rem; }
+.repositories h2 { margin-top: 0; }
 caption { padding-bottom: .5rem; color: #5b6472; text-align: left; }
 th, td { padding: .6rem .5rem; border-bottom: 1px solid #d5dae1; text-align: left;
     vertical-align: top; }
@@ -441,6 +489,7 @@ footer { margin-top: 2.5rem; color: #5b6472; font-size: .9rem; }
     body { padding-top: 1.5rem; }
     .account-grid, .account .credentials { display: block; }
     .account form, .create form, .token-form { display: block; }
+    .visibility { margin-top: .65rem; }
     button { width: 100%; margin-top: .65rem; }
     .account-bar button, .token-list button { width: auto; margin-top: 0; }
     table { display: block; overflow-x: auto; }
@@ -449,7 +498,8 @@ footer { margin-top: 2.5rem; color: #5b6472; font-size: .9rem; }
     body { color: #e6e9ef; background: #12161c; }
     .lead, .hint, caption, footer, .badge-quiet, .empty { color: #9aa4b2; }
     .account, .create, th, td, .token-list li { border-color: #2b323d; }
-    input { border-color: #596474; background: #1a1f27; color: #e6e9ef; }
+    input:not([type="radio"]) { border-color: #596474; background: #1a1f27; color: #e6e9ef; }
+    .visibility-options, .visibility-option + .visibility-option { border-color: #596474; }
     pre { border-color: #2b323d; background: #1a1f27; }
     .empty { border-color: #3a424f; }
     .notice-success { background: #152b20; color: #95dab1; }
@@ -541,7 +591,7 @@ function home_send_authentication($url_base, $configuration, $notice) {
     echo '</section>' ."\n";
 }
 
-function home_send_creation($url_base, $configuration, $notice, $value) {
+function home_send_creation($url_base, $configuration, $notice, $value, $visibility) {
     if (!home_managed_repositories_configured($configuration)) {
         return;
     }
@@ -568,21 +618,28 @@ function home_send_creation($url_base, $configuration, $notice, $value) {
 
     echo '<form method="post" action="'.home_escape(home_page_url($url_base)).'">' ."\n";
     echo '<input type="hidden" name="csrf_token" value="'.home_escape($token).'">' ."\n";
+    echo '<input type="hidden" name="action" value="create_repository">' ."\n";
     echo '<div class="field"><label for="repository-name">仓库名称</label>' ."\n";
     echo '<input id="repository-name" name="repository_name" type="text" maxlength="68" '
         .'pattern="[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9_-])?(?:\.git)?" '
         .'placeholder="project" value="'
         .home_escape($value).'" autocomplete="off" required>' ."\n";
     echo '<p class="hint">可使用字母、数字、点、短横线和下划线；<code>.git</code> 后缀可省略。</p></div>' ."\n";
+    echo '<fieldset class="visibility"><legend>可见性</legend><div class="visibility-options">' ."\n";
+    echo '<label class="visibility-option"><input name="visibility" type="radio" value="public"'
+        .($visibility !== 'private' ? ' checked' : '').'><span>公开</span></label>' ."\n";
+    echo '<label class="visibility-option"><input name="visibility" type="radio" value="private"'
+        .($visibility === 'private' ? ' checked' : '').'><span>私有</span></label>' ."\n";
+    echo '</div></fieldset>' ."\n";
     echo '<button type="submit">创建仓库</button>' ."\n";
     echo '</form>' ."\n";
     echo '</section>' ."\n";
 }
 
-function home_send_repository_table($repositories, $prefix) {
+function home_send_repository_table($repositories, $prefix, $caption) {
     echo '<table>'."\n";
-    echo '<caption>已配置且允许读取的仓库</caption>'."\n";
-    echo '<thead><tr><th scope="col">仓库</th><th scope="col">克隆地址</th>'
+    echo '<caption>'.home_escape($caption).'</caption>'."\n";
+    echo '<thead><tr><th scope="col">仓库</th><th scope="col">所有者</th><th scope="col">克隆地址</th>'
         .'<th scope="col">默认分支</th><th scope="col" class="count">分支</th>'
         .'<th scope="col" class="count">标签</th><th scope="col">权限</th></tr></thead>'."\n";
     echo '<tbody>'."\n";
@@ -596,12 +653,16 @@ function home_send_repository_table($repositories, $prefix) {
         } else {
             $head = '<span class="badge badge-quiet">未指向分支</span>';
         }
-        $access = $repository['options']['push']
-            ? '<span class="badge badge-push">读取 / 推送</span>'
+        $owner = $repository['options']['owner'] === NULL
+            ? '<span class="badge badge-quiet">未设置</span>'
+            : '<code>'.home_escape($repository['options']['owner']).'</code>';
+        $access = $repository['options']['push'] && $repository['options']['owner'] !== NULL
+            ? '<span class="badge badge-push">所有者可推送</span>'
             : '<span class="badge badge-quiet">只读</span>';
 
         echo '<tr>';
         echo '<td>'.home_escape(basename($repository['url'])).'</td>';
+        echo '<td>'.$owner.'</td>';
         echo '<td><code>'.home_escape($prefix.$repository['url']).'</code></td>';
         echo '<td>'.$head.'</td>';
         echo '<td class="count">'.home_escape($summary['branches']).'</td>';
@@ -611,6 +672,17 @@ function home_send_repository_table($repositories, $prefix) {
     }
 
     echo '</tbody>'."\n".'</table>'."\n";
+}
+
+function home_send_repository_section($id, $title, $repositories, $prefix, $empty_message) {
+    echo '<section class="repositories" aria-labelledby="'.home_escape($id).'">' ."\n";
+    echo '<h2 id="'.home_escape($id).'">'.home_escape($title).'</h2>' ."\n";
+    if (empty($repositories)) {
+        echo '<p class="empty">'.home_escape($empty_message).'</p>' ."\n";
+    } else {
+        home_send_repository_table($repositories, $prefix, $title);
+    }
+    echo '</section>' ."\n";
 }
 
 function home_send_empty_notice() {
@@ -641,8 +713,10 @@ function home_render(
     $definitions,
     $configuration,
     $notice=NULL,
-    $value='') {
-    $repositories = home_visible_repositories($url_base, $definitions);
+    $value='',
+    $visibility='public') {
+    $show_private = get_authenticated_user() !== NULL;
+    $repositories = home_visible_repositories($url_base, $definitions, $show_private);
     $prefix = home_clone_url_prefix();
 
     header_nocache();
@@ -656,15 +730,24 @@ function home_render(
             .home_escape($notice['message']).'</p>' ."\n";
     }
     home_send_authentication($url_base, $configuration, $notice);
-    home_send_creation($url_base, $configuration, NULL, $value);
+    home_send_creation($url_base, $configuration, NULL, $value, $visibility);
 
-    if (empty($repositories)) {
-        home_send_empty_notice();
-    } else {
-        home_send_repository_table($repositories, $prefix);
+    home_send_repository_section(
+        'public-repositories',
+        '公开仓库',
+        $repositories['public'],
+        $prefix,
+        '当前没有公开仓库。');
+    if ($show_private) {
+        home_send_repository_section(
+            'private-repositories',
+            '私有仓库',
+            $repositories['private'],
+            $prefix,
+            '当前没有私有仓库。');
     }
 
-    home_send_usage($repositories, $prefix);
+    home_send_usage(array_merge($repositories['public'], $repositories['private']), $prefix);
 
     echo '<footer>详细安装、配置和安全说明见 <code>usage.md</code>。</footer>'."\n";
     echo '</body>'."\n".'</html>'."\n";
@@ -749,4 +832,5 @@ if ($repository === FALSE) {
 }
 
 $request = create_http_request($url_path, $repository);
+repository_require_private_access($repository, $request);
 dispatch_service($services, $repository, $request, $application);

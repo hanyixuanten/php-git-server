@@ -19,8 +19,12 @@ function push_require_access($repository, $request) {
         send_error(403, 'Forbidden', 'Repository pushes are disabled.');
     }
 
-    if ($repository['options']['require_auth'] && $request['user'] === NULL) {
+    if ($request['user'] === NULL) {
         require_authentication('A valid username and access token are required for push.');
+    }
+
+    if (!repository_user_is_owner($repository, $request['user'])) {
+        send_error(403, 'Forbidden', 'Only the repository owner can push.');
     }
 }
 

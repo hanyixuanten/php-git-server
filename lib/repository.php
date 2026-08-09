@@ -17,7 +17,8 @@ function repository_default_options() {
     return array(
         'read' => TRUE,
         'push' => FALSE,
-        'require_auth' => TRUE,
+        'owner' => NULL,
+        'private' => FALSE,
         'branches' => TRUE,
         'tags' => TRUE,
         'other_refs' => FALSE,
@@ -25,6 +26,42 @@ function repository_default_options() {
         'max_object_bytes' => 268435456,
         'max_pack_objects' => 100000,
         'max_request_bytes' => 0);
+}
+
+function repository_is_private($repository) {
+    return !empty($repository['options']['private']);
+}
+
+function repository_user_is_owner($repository, $user) {
+    $owner = isset($repository['options']['owner']) ? $repository['options']['owner'] : NULL;
+    return is_string($owner) && $owner !== ''
+        && is_string($user) && hash_equals($owner, $user);
+}
+
+function repository_require_private_access($repository, $request) {
+    if (repository_is_private($repository) && $request['user'] === NULL) {
+        require_authentication(
+            'A valid username and access token are required to access this private repository.');
+    }
+
+    if (repository_is_private($repository)) {
+        header('Cache-Control: private, no-store, max-age=0');
+    }
+}
+
+function repository_require_read_access($repository, $request) {
+    repository_require_private_access($repository, $request);
+
+    if (!$repository['options']['read']) {
+        send_error(403, 'Forbidden', 'Repository reads are disabled.');
+    }
+}
+
+function repository_header_nocache($repository) {
+    header_nocache();
+    if (repository_is_private($repository)) {
+        header('Cache-Control: private, no-store, max-age=0');
+    }
 }
 
 function managed_repository_root($configuration) {
@@ -110,6 +147,10 @@ function managed_repository_definitions($configuration) {
 
     $options = isset($configuration['options']) && is_array($configuration['options'])
         ? $configuration['options'] : array();
+    $metadata = auth_repository_metadata();
+    if ($metadata === FALSE) {
+        $metadata = array();
+    }
     $definitions = array();
     $entries = @scandir($root);
     if ($entries === FALSE) {
@@ -126,7 +167,17 @@ function managed_repository_definitions($configuration) {
             continue;
         }
 
-        $definitions[] = array('/'.$entry, $path, $options);
+        if (isset($metadata[$entry]) && !$metadata[$entry]['ready']) {
+            continue;
+        }
+
+        $repository_metadata = isset($metadata[$entry])
+            ? $metadata[$entry] : array('owner' => NULL, 'private' => TRUE);
+        unset($repository_metadata['ready']);
+        $definitions[] = array(
+            '/'.$entry,
+            $path,
+            array_merge($options, $repository_metadata));
     }
 
     return $definitions;
@@ -191,10 +242,16 @@ function normalize_repository($definition, $url_base) {
         return FALSE;
     }
 
+    $normalized_options = array_merge(repository_default_options(), $options);
+    if (!is_string($normalized_options['owner']) || $normalized_options['owner'] === '') {
+        $normalized_options['owner'] = NULL;
+    }
+    $normalized_options['private'] = (bool) $normalized_options['private'];
+
     return array(
         'url' => $url,
         'path' => $git_path,
-        'options' => array_merge(repository_default_options(), $options));
+        'options' => $normalized_options);
 }
 
 function find_configured_repository($url_base, $definitions, $url_path) {

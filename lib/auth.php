@@ -404,6 +404,110 @@ function auth_revoke_access_token($user_id, $token_id) {
     }
 }
 
+function auth_repository_metadata() {
+    $database = auth_database();
+    if ($database === FALSE) {
+        return FALSE;
+    }
+
+    try {
+        $statement = $database->query(
+            'SELECT pgit_repositories.repository_name, pgit_repositories.is_private, '
+            .'pgit_repositories.is_ready, '
+            .'pgit_users.username AS owner '
+            .'FROM pgit_repositories JOIN pgit_users '
+            .'ON pgit_users.id = pgit_repositories.owner_user_id');
+        $metadata = array();
+        foreach ($statement->fetchAll() as $repository) {
+            $metadata[$repository['repository_name']] = array(
+                'owner' => $repository['owner'],
+                'private' => (bool) $repository['is_private'],
+                'ready' => (bool) $repository['is_ready']);
+        }
+        return $metadata;
+    } catch (PDOException $exception) {
+        error_log('Repository metadata lookup failed: '.$exception->getMessage());
+        return FALSE;
+    }
+}
+
+function auth_reserve_repository_metadata($name, $owner_user_id, $private) {
+    $database = auth_database();
+    if ($database === FALSE) {
+        return array('status' => 'database_unavailable');
+    }
+
+    try {
+        $statement = $database->prepare(
+            'INSERT INTO pgit_repositories '
+            .'(repository_name, owner_user_id, is_private, is_ready) VALUES (?, ?, ?, 0)');
+        $statement->execute(array($name, $owner_user_id, $private ? 1 : 0));
+        return array('status' => 'reserved', 'id' => (int) $database->lastInsertId());
+    } catch (PDOException $exception) {
+        $driver_code = isset($exception->errorInfo[1]) ? (int) $exception->errorInfo[1] : 0;
+        if ($driver_code !== 1062) {
+            error_log('Repository metadata reservation failed: '.$exception->getMessage());
+            return array('status' => 'database_unavailable');
+        }
+    }
+
+    try {
+        $statement = $database->prepare(
+            'SELECT id, owner_user_id, is_ready FROM pgit_repositories '
+            .'WHERE repository_name = ? LIMIT 1');
+        $statement->execute(array($name));
+        $metadata = $statement->fetch();
+        if ($metadata === FALSE || (int) $metadata['is_ready'] !== 0
+            || (int) $metadata['owner_user_id'] !== (int) $owner_user_id) {
+            return array('status' => 'already_exists');
+        }
+
+        $update = $database->prepare(
+            'UPDATE pgit_repositories SET is_private = ? WHERE id = ? AND is_ready = 0');
+        $update->execute(array($private ? 1 : 0, $metadata['id']));
+        return array('status' => 'reserved', 'id' => (int) $metadata['id']);
+    } catch (PDOException $exception) {
+        error_log('Repository metadata reservation recovery failed: '.$exception->getMessage());
+        return array('status' => 'database_unavailable');
+    }
+}
+
+function auth_complete_repository_metadata($metadata_id, $owner_user_id) {
+    $database = auth_database();
+    if ($database === FALSE) {
+        return FALSE;
+    }
+
+    try {
+        $statement = $database->prepare(
+            'UPDATE pgit_repositories SET is_ready = 1 '
+            .'WHERE id = ? AND owner_user_id = ? AND is_ready = 0');
+        $statement->execute(array($metadata_id, $owner_user_id));
+        return $statement->rowCount() === 1;
+    } catch (PDOException $exception) {
+        error_log('Repository metadata completion failed: '.$exception->getMessage());
+        return FALSE;
+    }
+}
+
+function auth_recover_repository_metadata($name, $owner_user_id, $private) {
+    $database = auth_database();
+    if ($database === FALSE) {
+        return array('status' => 'database_unavailable');
+    }
+
+    try {
+        $statement = $database->prepare(
+            'UPDATE pgit_repositories SET is_private = ?, is_ready = 1 '
+            .'WHERE repository_name = ? AND owner_user_id = ? AND is_ready = 0');
+        $statement->execute(array($private ? 1 : 0, $name, $owner_user_id));
+        return array('status' => $statement->rowCount() === 1 ? 'recovered' : 'not_found');
+    } catch (PDOException $exception) {
+        error_log('Repository metadata recovery failed: '.$exception->getMessage());
+        return array('status' => 'database_unavailable');
+    }
+}
+
 function auth_get_authenticated_user() {
     global $auth_cached_user_resolved, $auth_cached_user;
     if ($auth_cached_user_resolved) {
