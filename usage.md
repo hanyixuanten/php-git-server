@@ -68,7 +68,7 @@ cp config.php.sample config.php
 ```sql
 CREATE DATABASE php_git_server CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'php_git_server'@'127.0.0.1' IDENTIFIED BY 'replace-with-a-long-random-password';
-GRANT SELECT, INSERT, UPDATE ON php_git_server.* TO 'php_git_server'@'127.0.0.1';
+GRANT SELECT, INSERT, UPDATE, DELETE ON php_git_server.* TO 'php_git_server'@'127.0.0.1';
 ```
 
 ```sh
@@ -114,6 +114,7 @@ $git_executable = 'git';
 $auth = array(
     'enabled' => TRUE,
     'registration_enabled' => TRUE,
+    'administrators' => array('alice'),
     'session_cookie_secure' => TRUE,
     'database' => array(
         'dsn' => 'mysql:host=127.0.0.1;port=3306;dbname=php_git_server;charset=utf8mb4',
@@ -184,6 +185,7 @@ $managed_repositories = array(
 ```
 
 - 创建仓库必须登录；当前账号自动成为仓库所有者，并可在表单中选择“公开”或“私有”。
+- 托管仓库所有者可在首页勾选确认后永久删除自己的仓库。删除同时移除 `pgit_repositories` 记录和对应 bare 仓库目录，不能撤销；静态 `$repos` 条目不会显示删除操作。
 - 启用账号认证时，`$auth['session_cookie_secure']` 控制登录与表单共用 Session Cookie 的 Secure 属性。应用直连 HTTPS 时会自动识别；TLS 在可信反向代理终止时应显式设为 `TRUE`，并确保外部流量只能通过 HTTPS 访问。
 - `options` 是所有主界面新建仓库共同继承的仓库选项，其含义与 `$repos` 条目相同。
 - 设置 `$managed_repositories = array();` 可完全关闭主界面创建功能。
@@ -220,6 +222,38 @@ push 请求会先写入系统临时目录，以便在交给 `git-receive-pack` �
 ### 账号配置
 
 `$auth` 启用后，首页提供注册和登录。用户密码通过 PHP `password_hash()` 保存；应用不会保存明文密码。`registration_enabled => FALSE` 可关闭新用户注册，已有用户仍可登录。生产部署完成首批账号注册后，建议关闭公开注册，或在反向代理/WAF 中为注册和登录请求配置速率限制。
+
+### 管理员配置与管理界面
+
+管理员由 `config.php` 中的账号用户名列表决定：
+
+```php
+$auth = array(
+    'enabled' => TRUE,
+    'registration_enabled' => FALSE,
+    'administrators' => array(
+        'alice',
+        'release-admin'),
+    'database' => array(
+        // ...
+    ));
+```
+
+列表按大小写精确匹配，且账号必须已经存在并保持启用。修改配置后无需更新数据库角色；管理员退出并重新登录后即可从首页进入 `manage.php`。配置中的管理员用户名不能通过公开注册创建：部署首个管理员时，应先注册可信账号，再把它加入配置；其他管理员可由现有管理员创建账号后再加入配置。
+
+管理界面提供以下操作：
+
+- 创建、启用和停用用户，重置用户密码，撤销该用户的全部有效 Access Token。
+- 删除不再拥有任何托管仓库的非管理员用户；当前登录账号和配置中的管理员账号不能被停用或删除。
+- 转移托管仓库所有者，在公开与私有之间切换，并永久删除任意托管仓库。
+- 查看静态 `$repos` 配置仓库，但不修改 `config.php`，也不删除其路径。
+
+以下两项约束由服务端强制，构造请求同样无效：
+
+- 若某个静态 `$repos` 条目指向 `repos` 目录中的同一路径，该仓库标记为“静态配置”且不可删除。要删除它，应先从 `config.php` 移除对应条目。
+- 仍被静态 `$repos` 条目列为 `owner` 的账号不能删除。用户名删除后可被重新注册，若此时仍留在配置中，新账号会直接获得该仓库的 push 权限；应先在配置中更换 `owner`。
+
+停用用户后，其浏览器 Session 在下一次请求时失效，Access Token 也不再通过认证。删除仓库和用户均为不可撤销操作；执行前应确认已有可恢复备份。管理请求只接受网页登录 Session，并使用独立的 CSRF Token；Git Access Token 不能用于登录管理页。
 
 `session_cookie_secure` 在应用直连 HTTPS 时会自动推断。TLS 在可信反向代理终止时必须显式设为 `TRUE`，并确保外部只能通过 HTTPS 访问。不要再给应用路径配置 Apache `AuthType Basic`，否则 Apache 会在请求到达 PHP 前拦截应用注册、登录及 token 验证。
 
@@ -477,7 +511,11 @@ curl -i -X POST https://git.example.com/php-git-server/project.git/HEAD
 
 ### 首页显示认证数据库不可用
 
-检查 PHP/Apache 错误日志、`pdo_mysql` 扩展、MySQL 地址和账号权限，并确认已导入 `schema.mysql.sql`。应用数据库账号需要 `SELECT`、`INSERT` 和 `UPDATE`，不需要运行时建表或删除权限。
+检查 PHP/Apache 错误日志、`pdo_mysql` 扩展、MySQL 地址和账号权限，并确认已导入 `schema.mysql.sql`。应用数据库账号需要 `SELECT`、`INSERT`、`UPDATE` 和 `DELETE`，但不需要运行时建表权限。
+
+### 管理页返回 403
+
+确认已经使用浏览器登录应用账号，并且 `config.php` 的 `$auth['administrators']` 包含该账号的精确用户名。用户名区分大小写；已停用用户、Git HTTP Basic 凭据和 Access Token 都不能直接进入管理页。
 
 ### push 返回 500 或远端断开
 

@@ -13,13 +13,17 @@ $git_executable = 'git';
 
 /*
  * Application accounts and access tokens. Import schema.mysql.sql before
- * enabling this section. Use a dedicated MySQL user with SELECT, INSERT and
- * UPDATE privileges on these tables; DELETE and schema privileges are not
+ * enabling this section. Use a dedicated MySQL user with SELECT, INSERT,
+ * UPDATE and DELETE privileges on these tables; schema privileges are not
  * required by the application.
  */
 $auth = array(
     'enabled' => TRUE,
     'registration_enabled' => TRUE,
+    /* Exact, case-sensitive usernames. Add only existing trusted accounts. */
+    'administrators' => array(
+        // 'replace-with-existing-username',
+    ),
     /* Set to TRUE when HTTPS terminates at a trusted reverse proxy. */
     // 'session_cookie_secure' => TRUE,
     'database' => array(

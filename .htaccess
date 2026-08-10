@@ -1,6 +1,6 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
-    RewriteRule ^index\.php$ - [L]
+    RewriteRule ^(?:index|manage)\.php$ - [L]
     RewriteRule ^ index.php [L,QSA]
 </IfModule>

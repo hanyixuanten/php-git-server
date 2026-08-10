@@ -149,7 +149,7 @@ function home_auth_result_notice($result) {
         case 'password_mismatch':
             return array('error', '两次输入的密码不一致。');
         case 'username_exists':
-            return array('error', '该用户名已被注册。');
+            return array('error', '该用户名已存在或不可用。');
         case 'invalid_credentials':
             return array('error', '用户名或密码错误。');
         case 'invalid_token_name':
@@ -263,6 +263,36 @@ function home_creation_result_notice($result) {
     }
 }
 
+function home_deletion_result_notice($result) {
+    $name = isset($result['name']) ? $result['name'] : '';
+    switch ($result['status']) {
+        case 'deleted':
+            return array(303, 'success', '仓库 '.$name.' 已删除。');
+        case 'record_deleted':
+            return array(303, 'success', '仓库记录 '.$name.' 已删除，非 bare 路径未作改动。');
+        case 'invalid_repository':
+            return array(422, 'error', '仓库名称格式无效。');
+        case 'forbidden':
+            return array(403, 'error', '只有仓库所有者可以删除该仓库。');
+        case 'configured_repository':
+            return array(403, 'error', '该路径由 config.php 静态配置，不能从网页删除。');
+        case 'not_found':
+            return array(404, 'error', '托管仓库不存在或尚未创建完成。');
+        case 'repository_busy':
+            return array(409, 'error', '仓库正在执行其他操作，请稍后重试。');
+        case 'root_unavailable':
+            return array(503, 'error', '仓库存放目录不可用或不可写。');
+        case 'metadata_unavailable':
+            return array(503, 'error', '仓库所有权信息当前不可用。');
+        case 'cleanup_failed':
+            return array(500, 'error', '仓库记录已删除，但残留目录清理失败，请检查服务器日志。');
+        case 'restore_failed':
+            return array(500, 'error', '删除失败且仓库目录无法恢复，请立即检查服务器日志。');
+        default:
+            return array(500, 'error', '仓库删除失败，请检查服务器日志。');
+    }
+}
+
 function home_create_repository(
     $url_base,
     $definitions,
@@ -318,6 +348,39 @@ function home_create_repository(
         $value,
         $visibility);
     die();
+}
+
+function home_delete_repository($url_base, $definitions, $configuration) {
+    if (!home_managed_repositories_configured($configuration)) {
+        send_error(403, 'Forbidden', 'Managed repositories are disabled.');
+    }
+    home_require_csrf($url_base, $configuration);
+
+    $user = auth_session_user();
+    if ($user === NULL) {
+        send_error(403, 'Forbidden', 'Login is required to delete repositories.');
+    }
+    if (home_post_value('confirmation') !== 'delete') {
+        send_error(422, 'Unprocessable Content', 'Repository deletion must be confirmed.');
+    }
+
+    $result = delete_managed_repository(
+        $configuration,
+        $definitions,
+        $url_base,
+        home_post_value('repository_name'),
+        $user['id']);
+    $notice = home_deletion_result_notice($result);
+    if ($result['status'] === 'deleted') {
+        home_set_notice($url_base, $configuration, $notice[1], $notice[2]);
+        home_redirect($url_base);
+    }
+
+    send_error($notice[0], $notice[0] === 403 ? 'Forbidden'
+        : ($notice[0] === 404 ? 'Not Found'
+        : ($notice[0] === 409 ? 'Conflict'
+        : ($notice[0] === 422 ? 'Unprocessable Content'
+        : ($notice[0] === 503 ? 'Service Unavailable' : 'Internal Server Error')))), $notice[2]);
 }
 
 function home_repository_url_cmp($left, $right) {
@@ -433,10 +496,10 @@ p { margin: 0 0 1rem; }
 .account .credentials { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; flex: 1; }
 .field { flex: 1 1 22rem; }
 label { display: block; margin-bottom: .3rem; font-weight: 600; }
-input:not([type="radio"]) { box-sizing: border-box; width: 100%; min-height: 2.6rem; padding: .5rem .7rem;
+input:not([type="radio"]):not([type="checkbox"]) { box-sizing: border-box; width: 100%; min-height: 2.6rem; padding: .5rem .7rem;
     border: 1px solid #9ba4b0; border-radius: .35rem; background: #fff; color: #1f2530;
     font: inherit; }
-input:not([type="radio"]):focus { border-color: #1769aa; outline: 2px solid #1769aa; outline-offset: 1px; }
+input:not([type="radio"]):not([type="checkbox"]):focus { border-color: #1769aa; outline: 2px solid #1769aa; outline-offset: 1px; }
 .visibility { flex: 0 0 13rem; margin: 0; padding: 0; border: 0; }
 .visibility legend { margin-bottom: .3rem; font-weight: 600; }
 .visibility-options { display: grid; grid-template-columns: 1fr 1fr; min-height: 2.6rem;
@@ -455,8 +518,13 @@ button:hover { background: #125635; }
 .button-danger { border-color: #983434; background: #a43a3a; }
 .button-danger:hover { background: #842e2e; }
 .account-bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.account-actions { display: flex; align-items: center; gap: .75rem; }
 .account-bar form, .token-list form { display: block; }
 .account-bar button, .token-list button { width: auto; margin: 0; }
+.account-actions a { color: #075d8f; font-weight: 600; }
+.confirm-delete { display: flex; align-items: center; gap: .35rem; margin: 0;
+    color: #5b6472; font-size: .8rem; font-weight: 400; white-space: nowrap; }
+.confirm-delete input { width: auto; min-height: auto; }
 .token-result { user-select: all; }
 .token-list { margin: 1rem 0 0; padding: 0; list-style: none; }
 .token-list li { display: flex; justify-content: space-between; gap: 1rem; align-items: center;
@@ -496,9 +564,9 @@ footer { margin-top: 2.5rem; color: #5b6472; font-size: .9rem; }
 }
 @media (prefers-color-scheme: dark) {
     body { color: #e6e9ef; background: #12161c; }
-    .lead, .hint, caption, footer, .badge-quiet, .empty { color: #9aa4b2; }
+    .lead, .hint, caption, footer, .badge-quiet, .empty, .confirm-delete { color: #9aa4b2; }
     .account, .create, th, td, .token-list li { border-color: #2b323d; }
-    input:not([type="radio"]) { border-color: #596474; background: #1a1f27; color: #e6e9ef; }
+    input:not([type="radio"]):not([type="checkbox"]) { border-color: #596474; background: #1a1f27; color: #e6e9ef; }
     .visibility-options, .visibility-option + .visibility-option { border-color: #596474; }
     pre { border-color: #2b323d; background: #1a1f27; }
     .empty { border-color: #3a424f; }
@@ -563,9 +631,13 @@ function home_send_authentication($url_base, $configuration, $notice) {
     }
 
     echo '<div class="account-bar"><p>当前账号：<strong>'.home_escape($user['username']).'</strong></p>' ."\n";
+    echo '<div class="account-actions">';
+    if (auth_user_is_administrator($user)) {
+        echo '<a href="'.home_escape(rtrim((string) $url_base, '/').'/manage.php').'">管理</a>';
+    }
     echo '<form method="post" action="'.$action.'">'.$csrf_field;
     echo '<input type="hidden" name="action" value="logout">' ."\n";
-    echo '<button class="button-danger" type="submit">退出</button></form></div>' ."\n";
+    echo '<button class="button-danger" type="submit">退出</button></form></div></div>' ."\n";
     echo '<form class="token-form" method="post" action="'.$action.'">'.$csrf_field;
     echo '<input type="hidden" name="action" value="create_token">' ."\n";
     echo '<div class="field"><label for="token-name">新 Token 名称</label>' ."\n";
@@ -636,12 +708,20 @@ function home_send_creation($url_base, $configuration, $notice, $value, $visibil
     echo '</section>' ."\n";
 }
 
-function home_send_repository_table($repositories, $prefix, $caption) {
+function home_send_repository_table(
+    $repositories,
+    $prefix,
+    $caption,
+    $url_base,
+    $configuration) {
+    $user = auth_session_user();
+    $csrf_token = $user === NULL ? FALSE : home_csrf_token($url_base, $configuration);
     echo '<table>'."\n";
     echo '<caption>'.home_escape($caption).'</caption>'."\n";
     echo '<thead><tr><th scope="col">仓库</th><th scope="col">所有者</th><th scope="col">克隆地址</th>'
         .'<th scope="col">默认分支</th><th scope="col" class="count">分支</th>'
-        .'<th scope="col" class="count">标签</th><th scope="col">权限</th></tr></thead>'."\n";
+        .'<th scope="col" class="count">标签</th><th scope="col">权限</th>'
+        .'<th scope="col">操作</th></tr></thead>' ."\n";
     echo '<tbody>'."\n";
 
     foreach ($repositories as $repository) {
@@ -668,19 +748,47 @@ function home_send_repository_table($repositories, $prefix, $caption) {
         echo '<td class="count">'.home_escape($summary['branches']).'</td>';
         echo '<td class="count">'.home_escape($summary['tags']).'</td>';
         echo '<td>'.$access.'</td>';
+        echo '<td>';
+        if ($user !== NULL && $csrf_token !== FALSE
+            && repository_user_is_owner($repository, $user['username'])
+            && home_repository_is_managed($repository, $configuration)) {
+            echo '<form method="post" action="'.home_escape(home_page_url($url_base)).'">' ."\n";
+            echo '<input type="hidden" name="csrf_token" value="'.home_escape($csrf_token).'">' ."\n";
+            echo '<input type="hidden" name="action" value="delete_repository">' ."\n";
+            echo '<input type="hidden" name="repository_name" value="'
+                .home_escape(basename($repository['url'])).'">' ."\n";
+            echo '<label class="confirm-delete"><input name="confirmation" type="checkbox" '
+                .'value="delete" required> 确认删除</label>' ."\n";
+            echo '<button class="button-danger" type="submit">删除</button></form>';
+        } else {
+            echo '<span class="badge badge-quiet">无</span>';
+        }
+        echo '</td>';
         echo '</tr>'."\n";
     }
 
     echo '</tbody>'."\n".'</table>'."\n";
 }
 
-function home_send_repository_section($id, $title, $repositories, $prefix, $empty_message) {
+function home_repository_is_managed($repository, $configuration) {
+    return !empty($repository['options']['_managed']);
+}
+
+function home_send_repository_section(
+    $id,
+    $title,
+    $repositories,
+    $prefix,
+    $empty_message,
+    $url_base,
+    $configuration) {
     echo '<section class="repositories" aria-labelledby="'.home_escape($id).'">' ."\n";
     echo '<h2 id="'.home_escape($id).'">'.home_escape($title).'</h2>' ."\n";
     if (empty($repositories)) {
         echo '<p class="empty">'.home_escape($empty_message).'</p>' ."\n";
     } else {
-        home_send_repository_table($repositories, $prefix, $title);
+        home_send_repository_table(
+            $repositories, $prefix, $title, $url_base, $configuration);
     }
     echo '</section>' ."\n";
 }
@@ -737,14 +845,18 @@ function home_render(
         '公开仓库',
         $repositories['public'],
         $prefix,
-        '当前没有公开仓库。');
+        '当前没有公开仓库。',
+        $url_base,
+        $configuration);
     if ($show_private) {
         home_send_repository_section(
             'private-repositories',
             '私有仓库',
             $repositories['private'],
             $prefix,
-            '当前没有私有仓库。');
+            '当前没有私有仓库。',
+            $url_base,
+            $configuration);
     }
 
     home_send_usage(array_merge($repositories['public'], $repositories['private']), $prefix);
@@ -758,7 +870,9 @@ function home_dispatch($url_base, $definitions, $configuration, $application) {
 
     if ($method === 'POST') {
         $action = home_post_value('action');
-        if ($action !== '' && $action !== 'create_repository') {
+        if ($action === 'delete_repository') {
+            home_delete_repository($url_base, $definitions, $configuration);
+        } else if ($action !== '' && $action !== 'create_repository') {
             home_handle_auth_action($url_base, $configuration, $action);
         }
         home_create_repository($url_base, $definitions, $configuration, $application);

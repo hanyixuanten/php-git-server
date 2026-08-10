@@ -28,6 +28,27 @@ function auth_registration_is_enabled() {
             || $auth_configuration['registration_enabled'] === TRUE);
 }
 
+function auth_user_is_administrator($user) {
+    global $auth_configuration;
+
+    $username = is_array($user) && isset($user['username'])
+        ? $user['username'] : $user;
+    if (!is_string($username)
+        || !isset($auth_configuration['administrators'])
+        || !is_array($auth_configuration['administrators'])) {
+        return FALSE;
+    }
+
+    foreach ($auth_configuration['administrators'] as $administrator) {
+        $normalized = auth_normalize_username($administrator);
+        if ($normalized !== FALSE && hash_equals($normalized, $username)) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
 function auth_session_cookie_is_secure() {
     global $auth_configuration;
     if (isset($auth_configuration['session_cookie_secure'])) {
@@ -127,6 +148,30 @@ function auth_find_active_user_by_id($database, $user_id) {
     $statement->execute(array($user_id));
     $user = $statement->fetch();
     return $user === FALSE ? NULL : $user;
+}
+
+function auth_find_user_by_id($user_id_value) {
+    $user_id = auth_normalize_record_id($user_id_value);
+    if ($user_id === FALSE) {
+        return NULL;
+    }
+
+    $database = auth_database();
+    if ($database === FALSE) {
+        return FALSE;
+    }
+
+    try {
+        $statement = $database->prepare(
+            'SELECT id, username, is_active, created_at, updated_at '
+            .'FROM pgit_users WHERE id = ? LIMIT 1');
+        $statement->execute(array($user_id));
+        $user = $statement->fetch();
+        return $user === FALSE ? NULL : $user;
+    } catch (PDOException $exception) {
+        error_log('User lookup failed: '.$exception->getMessage());
+        return FALSE;
+    }
 }
 
 function auth_session_user() {
@@ -235,6 +280,9 @@ function auth_register($username_value, $password, $password_confirmation) {
     if ($username === FALSE) {
         return array('status' => 'invalid_username');
     }
+    if (auth_user_is_administrator($username)) {
+        return array('status' => 'username_exists');
+    }
     if (!auth_password_is_valid($password)) {
         return array('status' => 'invalid_password');
     }
@@ -266,6 +314,69 @@ function auth_register($username_value, $password, $password_confirmation) {
     $_SESSION['auth_user_id'] = $user_id;
     auth_reset_cached_user();
     return array('status' => 'registered', 'username' => $username);
+}
+
+function auth_create_user($username_value, $password, $password_confirmation) {
+    $username = auth_normalize_username($username_value);
+    if ($username === FALSE) {
+        return array('status' => 'invalid_username');
+    }
+    if (!auth_password_is_valid($password)) {
+        return array('status' => 'invalid_password');
+    }
+    if (!is_string($password_confirmation) || !hash_equals($password, $password_confirmation)) {
+        return array('status' => 'password_mismatch');
+    }
+
+    $database = auth_database();
+    if ($database === FALSE) {
+        return array('status' => 'database_unavailable');
+    }
+
+    try {
+        $statement = $database->prepare(
+            'INSERT INTO pgit_users (username, password_hash) VALUES (?, ?)');
+        $statement->execute(array($username, password_hash($password, PASSWORD_DEFAULT)));
+        return array(
+            'status' => 'user_created',
+            'id' => (int) $database->lastInsertId(),
+            'username' => $username);
+    } catch (PDOException $exception) {
+        if ((string) $exception->getCode() === '23000') {
+            return array('status' => 'username_exists');
+        }
+        error_log('Administrative user creation failed: '.$exception->getMessage());
+        return array('status' => 'database_unavailable');
+    }
+}
+
+function auth_set_user_password($user_id_value, $password, $password_confirmation) {
+    $user_id = auth_normalize_record_id($user_id_value);
+    if ($user_id === FALSE) {
+        return array('status' => 'invalid_user');
+    }
+    if (!auth_password_is_valid($password)) {
+        return array('status' => 'invalid_password');
+    }
+    if (!is_string($password_confirmation) || !hash_equals($password, $password_confirmation)) {
+        return array('status' => 'password_mismatch');
+    }
+
+    $database = auth_database();
+    if ($database === FALSE) {
+        return array('status' => 'database_unavailable');
+    }
+
+    try {
+        $statement = $database->prepare(
+            'UPDATE pgit_users SET password_hash = ? WHERE id = ?');
+        $statement->execute(array(password_hash($password, PASSWORD_DEFAULT), $user_id));
+        return array('status' => $statement->rowCount() === 1
+            ? 'password_updated' : 'invalid_user');
+    } catch (PDOException $exception) {
+        error_log('Administrative password reset failed: '.$exception->getMessage());
+        return array('status' => 'database_unavailable');
+    }
 }
 
 function auth_login($username_value, $password) {
@@ -320,7 +431,11 @@ function auth_logout() {
         return FALSE;
     }
 
-    unset($_SESSION['auth_user_id'], $_SESSION['home_csrf_token']);
+    unset(
+        $_SESSION['auth_user_id'],
+        $_SESSION['home_csrf_token'],
+        $_SESSION['manage_csrf_token'],
+        $_SESSION['manage_notice']);
     if (!session_regenerate_id(TRUE)) {
         return FALSE;
     }
@@ -400,6 +515,277 @@ function auth_revoke_access_token($user_id, $token_id) {
         return array('status' => $statement->rowCount() === 1 ? 'token_revoked' : 'invalid_token');
     } catch (PDOException $exception) {
         error_log('Access token revocation failed: '.$exception->getMessage());
+        return array('status' => 'database_unavailable');
+    }
+}
+
+function auth_normalize_record_id($value) {
+    if (is_int($value)) {
+        return $value > 0 ? $value : FALSE;
+    }
+    if (!is_string($value) || !preg_match('~^[1-9][0-9]*$~D', $value)) {
+        return FALSE;
+    }
+
+    $id = (int) $value;
+    return $id > 0 ? $id : FALSE;
+}
+
+function auth_list_users() {
+    $database = auth_database();
+    if ($database === FALSE) {
+        return FALSE;
+    }
+
+    try {
+        $statement = $database->query(
+            'SELECT pgit_users.id, pgit_users.username, pgit_users.is_active, '
+            .'pgit_users.created_at, pgit_users.updated_at, '
+            .'(SELECT COUNT(*) FROM pgit_access_tokens '
+            .'WHERE pgit_access_tokens.user_id = pgit_users.id '
+            .'AND pgit_access_tokens.revoked_at IS NULL) AS active_token_count, '
+            .'(SELECT COUNT(*) FROM pgit_repositories '
+            .'WHERE pgit_repositories.owner_user_id = pgit_users.id) AS repository_count '
+            .'FROM pgit_users ORDER BY pgit_users.username');
+        return $statement->fetchAll();
+    } catch (PDOException $exception) {
+        error_log('User administration listing failed: '.$exception->getMessage());
+        return FALSE;
+    }
+}
+
+function auth_set_user_active($user_id_value, $active) {
+    $user_id = auth_normalize_record_id($user_id_value);
+    if ($user_id === FALSE || !is_bool($active)) {
+        return array('status' => 'invalid_user');
+    }
+
+    $database = auth_database();
+    if ($database === FALSE) {
+        return array('status' => 'database_unavailable');
+    }
+
+    try {
+        if (!$active) {
+            $statement = $database->prepare(
+                'SELECT username FROM pgit_users WHERE id = ? LIMIT 1');
+            $statement->execute(array($user_id));
+            $user = $statement->fetch();
+            if ($user === FALSE) {
+                return array('status' => 'invalid_user');
+            }
+            if (auth_user_is_administrator($user)) {
+                return array('status' => 'administrator_protected');
+            }
+        }
+
+        $statement = $database->prepare(
+            'UPDATE pgit_users SET is_active = ? WHERE id = ?');
+        $statement->execute(array($active ? 1 : 0, $user_id));
+        if ($statement->rowCount() === 1) {
+            return array('status' => 'user_updated');
+        }
+
+        $statement = $database->prepare('SELECT id FROM pgit_users WHERE id = ? LIMIT 1');
+        $statement->execute(array($user_id));
+        return array('status' => $statement->fetch() === FALSE
+            ? 'invalid_user' : 'user_updated');
+    } catch (PDOException $exception) {
+        error_log('User status update failed: '.$exception->getMessage());
+        return array('status' => 'database_unavailable');
+    }
+}
+
+function auth_revoke_user_access_tokens($user_id_value) {
+    $user_id = auth_normalize_record_id($user_id_value);
+    if ($user_id === FALSE) {
+        return array('status' => 'invalid_user');
+    }
+
+    $database = auth_database();
+    if ($database === FALSE) {
+        return array('status' => 'database_unavailable');
+    }
+
+    try {
+        $statement = $database->prepare('SELECT id FROM pgit_users WHERE id = ? LIMIT 1');
+        $statement->execute(array($user_id));
+        if ($statement->fetch() === FALSE) {
+            return array('status' => 'invalid_user');
+        }
+
+        $statement = $database->prepare(
+            'UPDATE pgit_access_tokens SET revoked_at = CURRENT_TIMESTAMP '
+            .'WHERE user_id = ? AND revoked_at IS NULL');
+        $statement->execute(array($user_id));
+        return array('status' => 'tokens_revoked', 'count' => $statement->rowCount());
+    } catch (PDOException $exception) {
+        error_log('User access token revocation failed: '.$exception->getMessage());
+        return array('status' => 'database_unavailable');
+    }
+}
+
+function auth_delete_user($user_id_value) {
+    $user_id = auth_normalize_record_id($user_id_value);
+    if ($user_id === FALSE) {
+        return array('status' => 'invalid_user');
+    }
+
+    $database = auth_database();
+    if ($database === FALSE) {
+        return array('status' => 'database_unavailable');
+    }
+
+    try {
+        $statement = $database->prepare(
+            'SELECT username FROM pgit_users WHERE id = ? LIMIT 1');
+        $statement->execute(array($user_id));
+        $user = $statement->fetch();
+        if ($user === FALSE) {
+            return array('status' => 'invalid_user');
+        }
+        if (auth_user_is_administrator($user)) {
+            return array('status' => 'administrator_protected');
+        }
+
+        $statement = $database->prepare('DELETE FROM pgit_users WHERE id = ?');
+        $statement->execute(array($user_id));
+        return array('status' => $statement->rowCount() === 1
+            ? 'user_deleted' : 'invalid_user');
+    } catch (PDOException $exception) {
+        if ((string) $exception->getCode() === '23000') {
+            return array('status' => 'user_owns_repositories');
+        }
+        error_log('User deletion failed: '.$exception->getMessage());
+        return array('status' => 'database_unavailable');
+    }
+}
+
+function auth_list_repository_metadata() {
+    $database = auth_database();
+    if ($database === FALSE) {
+        return FALSE;
+    }
+
+    try {
+        $statement = $database->query(
+            'SELECT pgit_repositories.id, pgit_repositories.repository_name, '
+            .'pgit_repositories.owner_user_id, pgit_repositories.is_private, '
+            .'pgit_repositories.is_ready, pgit_repositories.created_at, '
+            .'pgit_repositories.updated_at, pgit_users.username AS owner '
+            .'FROM pgit_repositories JOIN pgit_users '
+            .'ON pgit_users.id = pgit_repositories.owner_user_id '
+            .'ORDER BY pgit_repositories.repository_name');
+        return $statement->fetchAll();
+    } catch (PDOException $exception) {
+        error_log('Repository administration listing failed: '.$exception->getMessage());
+        return FALSE;
+    }
+}
+
+function auth_find_repository_metadata($name) {
+    $database = auth_database();
+    if ($database === FALSE) {
+        return FALSE;
+    }
+
+    try {
+        $statement = $database->prepare(
+            'SELECT pgit_repositories.id, pgit_repositories.repository_name, '
+            .'pgit_repositories.owner_user_id, pgit_repositories.is_private, '
+            .'pgit_repositories.is_ready, pgit_users.username AS owner '
+            .'FROM pgit_repositories JOIN pgit_users '
+            .'ON pgit_users.id = pgit_repositories.owner_user_id '
+            .'WHERE pgit_repositories.repository_name = ? LIMIT 1');
+        $statement->execute(array($name));
+        $repository = $statement->fetch();
+        return $repository === FALSE ? NULL : $repository;
+    } catch (PDOException $exception) {
+        error_log('Repository metadata lookup failed: '.$exception->getMessage());
+        return FALSE;
+    }
+}
+
+function auth_update_repository_metadata(
+    $repository_id_value,
+    $owner_user_id_value,
+    $private) {
+    $repository_id = auth_normalize_record_id($repository_id_value);
+    $owner_user_id = auth_normalize_record_id($owner_user_id_value);
+    if ($repository_id === FALSE || $owner_user_id === FALSE || !is_bool($private)) {
+        return array('status' => 'invalid_repository');
+    }
+
+    $database = auth_database();
+    if ($database === FALSE) {
+        return array('status' => 'database_unavailable');
+    }
+
+    try {
+        $statement = $database->prepare(
+            'SELECT owner_user_id FROM pgit_repositories WHERE id = ? LIMIT 1');
+        $statement->execute(array($repository_id));
+        $repository = $statement->fetch();
+        if ($repository === FALSE) {
+            return array('status' => 'invalid_repository');
+        }
+
+        if ((int) $repository['owner_user_id'] !== $owner_user_id) {
+            $statement = $database->prepare(
+                'SELECT id FROM pgit_users WHERE id = ? AND is_active = 1 LIMIT 1');
+            $statement->execute(array($owner_user_id));
+        }
+        if ((int) $repository['owner_user_id'] !== $owner_user_id
+            && $statement->fetch() === FALSE) {
+            return array('status' => 'invalid_owner');
+        }
+
+        $statement = $database->prepare(
+            'UPDATE pgit_repositories SET owner_user_id = ?, is_private = ? WHERE id = ?');
+        $statement->execute(array($owner_user_id, $private ? 1 : 0, $repository_id));
+        if ($statement->rowCount() === 1) {
+            return array('status' => 'repository_updated');
+        }
+
+        $statement = $database->prepare(
+            'SELECT id FROM pgit_repositories WHERE id = ? LIMIT 1');
+        $statement->execute(array($repository_id));
+        return array('status' => $statement->fetch() === FALSE
+            ? 'invalid_repository' : 'repository_updated');
+    } catch (PDOException $exception) {
+        error_log('Repository metadata update failed: '.$exception->getMessage());
+        return array('status' => 'database_unavailable');
+    }
+}
+
+function auth_delete_repository_metadata($repository_id_value, $name, $owner_user_id_value=NULL) {
+    $repository_id = auth_normalize_record_id($repository_id_value);
+    $owner_user_id = $owner_user_id_value === NULL
+        ? NULL : auth_normalize_record_id($owner_user_id_value);
+    if ($repository_id === FALSE || !is_string($name)
+        || ($owner_user_id_value !== NULL && $owner_user_id === FALSE)) {
+        return array('status' => 'invalid_repository');
+    }
+
+    $database = auth_database();
+    if ($database === FALSE) {
+        return array('status' => 'database_unavailable');
+    }
+
+    try {
+        $query = 'DELETE FROM pgit_repositories WHERE id = ? AND repository_name = ?';
+        $values = array($repository_id, $name);
+        if ($owner_user_id !== NULL) {
+            $query .= ' AND owner_user_id = ?';
+            $values[] = $owner_user_id;
+        }
+
+        $statement = $database->prepare($query);
+        $statement->execute($values);
+        return array('status' => $statement->rowCount() === 1
+            ? 'metadata_deleted' : 'metadata_changed');
+    } catch (PDOException $exception) {
+        error_log('Repository metadata deletion failed: '.$exception->getMessage());
         return array('status' => 'database_unavailable');
     }
 }

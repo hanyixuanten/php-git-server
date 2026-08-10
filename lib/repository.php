@@ -19,6 +19,7 @@ function repository_default_options() {
         'push' => FALSE,
         'owner' => NULL,
         'private' => FALSE,
+        '_managed' => FALSE,
         'branches' => TRUE,
         'tags' => TRUE,
         'other_refs' => FALSE,
@@ -139,6 +140,131 @@ function remove_managed_repository_directory($path) {
     return @rmdir($path);
 }
 
+/* Static $repos entries may point into the managed root; those paths stay under
+   config.php control and must never be removed by a web request. */
+function managed_repository_path_is_configured($definitions, $url_base, $path) {
+    $real_path = realpath($path);
+
+    foreach ($definitions as $definition) {
+        $repository = normalize_repository($definition, $url_base);
+        if ($repository === FALSE || !empty($repository['options']['_managed'])) {
+            continue;
+        }
+
+        if ($repository['path'] === $path) {
+            return TRUE;
+        }
+
+        $configured_path = realpath($repository['path']);
+        if ($real_path !== FALSE && $configured_path !== FALSE
+            && $configured_path === $real_path) {
+            return TRUE;
+        }
+    }
+
+    return FALSE;
+}
+
+function delete_managed_repository(
+    $configuration,
+    $definitions,
+    $url_base,
+    $value,
+    $requesting_user_id,
+    $administrator=FALSE) {
+    $name = normalize_managed_repository_name($value);
+    if ($name === FALSE) {
+        return array('status' => 'invalid_repository');
+    }
+
+    $user_id = auth_normalize_record_id($requesting_user_id);
+    if ($user_id === FALSE) {
+        return array('status' => 'forbidden', 'name' => $name);
+    }
+
+    $root = managed_repository_root($configuration);
+    if ($root === FALSE || !is_writable($root)) {
+        return array('status' => 'root_unavailable', 'name' => $name);
+    }
+
+    $path = $root.DIRECTORY_SEPARATOR.$name;
+    if (managed_repository_path_is_configured($definitions, $url_base, $path)) {
+        return array('status' => 'configured_repository', 'name' => $name);
+    }
+
+    $lock = @fopen($root.DIRECTORY_SEPARATOR.'.create.lock', 'c+b');
+    if ($lock === FALSE) {
+        return array('status' => 'delete_failed', 'name' => $name);
+    }
+    if (!@flock($lock, LOCK_EX | LOCK_NB)) {
+        fclose($lock);
+        return array('status' => 'repository_busy', 'name' => $name);
+    }
+
+    $deletion_path = NULL;
+    try {
+        $metadata = auth_find_repository_metadata($name);
+        if ($metadata === FALSE) {
+            return array('status' => 'metadata_unavailable', 'name' => $name);
+        }
+        if ($metadata === NULL) {
+            return array('status' => 'not_found', 'name' => $name);
+        }
+        if (!$administrator && (int) $metadata['owner_user_id'] !== $user_id) {
+            return array('status' => 'forbidden', 'name' => $name);
+        }
+        if (!$administrator && (int) $metadata['is_ready'] !== 1) {
+            return array('status' => 'not_found', 'name' => $name);
+        }
+        if ($administrator && !managed_repository_is_bare($path)) {
+            $deletion = auth_delete_repository_metadata($metadata['id'], $name);
+            return array(
+                'status' => $deletion['status'] === 'metadata_deleted'
+                    ? 'record_deleted' : 'metadata_unavailable',
+                'name' => $name);
+        }
+        if (!managed_repository_is_bare($path)) {
+            return array('status' => 'not_found', 'name' => $name);
+        }
+
+        try {
+            $suffix = bin2hex(random_bytes(16));
+        } catch (Exception $exception) {
+            return array('status' => 'delete_failed', 'name' => $name);
+        }
+
+        $deletion_path = $root.DIRECTORY_SEPARATOR.'.delete-'.$suffix.'.tmp';
+        if (!@rename($path, $deletion_path)) {
+            return array('status' => 'delete_failed', 'name' => $name);
+        }
+
+        $owner_id = $administrator ? NULL : $user_id;
+        $deletion = auth_delete_repository_metadata(
+            $metadata['id'], $name, $owner_id);
+        if ($deletion['status'] !== 'metadata_deleted') {
+            if (!@rename($deletion_path, $path)) {
+                error_log('Unable to restore repository after metadata deletion failure: '.$name);
+                return array('status' => 'restore_failed', 'name' => $name);
+            }
+            $deletion_path = NULL;
+            return array(
+                'status' => $deletion['status'] === 'metadata_changed'
+                    ? 'forbidden' : 'metadata_unavailable',
+                'name' => $name);
+        }
+
+        if (!remove_managed_repository_directory($deletion_path)) {
+            error_log('Unable to remove deleted repository directory: '.$deletion_path);
+            return array('status' => 'cleanup_failed', 'name' => $name);
+        }
+        $deletion_path = NULL;
+        return array('status' => 'deleted', 'name' => $name);
+    } finally {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
+}
+
 function managed_repository_definitions($configuration) {
     $root = managed_repository_root($configuration);
     if ($root === FALSE) {
@@ -174,6 +300,7 @@ function managed_repository_definitions($configuration) {
         $repository_metadata = isset($metadata[$entry])
             ? $metadata[$entry] : array('owner' => NULL, 'private' => TRUE);
         unset($repository_metadata['ready']);
+        $repository_metadata['_managed'] = TRUE;
         $definitions[] = array(
             '/'.$entry,
             $path,

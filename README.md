@@ -13,6 +13,8 @@ This project serves configured Git repositories through PHP. It supports:
 - Repository ownership with owner-only pushes.
 - Public/private repositories and authenticated private reads.
 - Authenticated public/private bare-repository creation from the home page.
+- Owner deletion of managed repositories from the home page.
+- Configured administrators with user and repository management at `manage.php`.
 - Per-repository controls for reads, pushes, visibility, branch refs,
   tag refs, other ref namespaces and push request size.
 
@@ -46,6 +48,19 @@ Configuration
 Copy `config.php.sample` to `config.php`, import `schema.mysql.sql`, then
 configure `$url_base`, `$git_executable`, `$auth`, `$repos` and optionally
 `$managed_repositories`. A writable repository can be configured as:
+
+```php
+$auth['administrators'] = array('alice');
+```
+
+Administrator names are exact, case-sensitive usernames of existing accounts.
+After signing in, an administrator can open `manage.php` to create, activate,
+deactivate and delete users, reset passwords, revoke tokens, transfer managed
+repositories, change visibility, and delete managed repositories. Static
+`$repos` entries are shown read-only because they remain owned by `config.php`.
+A dedicated database account needs `SELECT`, `INSERT`, `UPDATE` and `DELETE`.
+
+A writable static repository can be configured as:
 
 ```php
 $repos = array(
@@ -82,6 +97,9 @@ $managed_repositories = array(
 
 The home page uses the logged-in application session for repository creation,
 records that account as owner, and lets the owner choose public or private.
+The owner can also permanently delete a managed repository after explicit
+confirmation. This removes its database metadata and bare repository directory;
+it never applies to static `$repos` entries.
 Anonymous visitors see only the public repository section. Logged-in users also
 see a separate private section, but Git access to private repositories still
 requires an access token rather than the browser session.
