@@ -1,6 +1,6 @@
 <?php
 
-/* First-run installer. It provisions the database, imports schema.mysql.sql and
+/* First-run installer. It imports schema.mysql.sql into an existing database and
    writes config.php. The missing config.php is the only thing gating this
    endpoint, so it refuses to run once that file exists. */
 
@@ -79,9 +79,10 @@ function install_post_checked($name) {
 }
 
 /* MySQL identifiers cannot be bound as parameters, so they are restricted to a
-   conservative character set before any interpolation. */
+   conservative character set before any interpolation. Hyphens are allowed
+   because shared hosting panels routinely generate names that contain them. */
 function install_identifier_is_valid($value) {
-    return is_string($value) && preg_match('~^[A-Za-z0-9_]{1,64}$~D', $value) === 1;
+    return is_string($value) && preg_match('~^[A-Za-z0-9_$-]{1,64}$~D', $value) === 1;
 }
 
 function install_host_is_valid($value) {
@@ -89,7 +90,7 @@ function install_host_is_valid($value) {
 }
 
 function install_quote_identifier($value) {
-    return '`'.$value.'`';
+    return '`'.str_replace('`', '``', $value).'`';
 }
 
 function install_schema_statements() {
@@ -127,28 +128,19 @@ function install_validate($input) {
         $errors[] = '数据库端口无效。';
     }
     if (!install_identifier_is_valid($input['db_name'])) {
-        $errors[] = '数据库名只能包含字母、数字和下划线，最多 64 个字符。';
+        $errors[] = '数据库名只能包含字母、数字、下划线和短横线，最多 64 个字符。';
     }
     if (!install_identifier_is_valid($input['db_user'])) {
-        $errors[] = '数据库用户名只能包含字母、数字和下划线，最多 64 个字符。';
+        $errors[] = '数据库用户名只能包含字母、数字、下划线和短横线，最多 64 个字符。';
     }
     if ($input['db_password'] === '' || strlen($input['db_password']) > 255) {
         $errors[] = '数据库密码不能为空，且最多 255 个字符。';
-    }
-    if (!install_host_is_valid($input['db_user_host'])) {
-        $errors[] = '数据库账号来源主机无效。';
-    }
-    if ($input['provision'] && $input['root_user'] === '') {
-        $errors[] = '选择自动创建数据库时必须填写管理账号名。';
-    }
-    if ($input['provision'] && !install_host_is_valid($input['root_user'])) {
-        $errors[] = '数据库管理账号名无效。';
     }
     if (auth_normalize_username($input['admin_username']) === FALSE) {
         $errors[] = '管理员用户名须为 3 至 64 个字母、数字、点、短横线或下划线。';
     }
     if (!auth_password_is_valid($input['admin_password'])) {
-        $errors[] = '管理员密码长度须为 12 至 72 个字符，且不能超过 72 字节。';
+        $errors[] = '管理员密码长度须为 8 至 72 个字符，且不能超过 72 字节。';
     } else if (!hash_equals($input['admin_password'], $input['admin_password_confirmation'])) {
         $errors[] = '两次输入的管理员密码不一致。';
     }
@@ -163,34 +155,9 @@ function install_connect($dsn, $username, $password) {
         PDO::ATTR_EMULATE_PREPARES => FALSE));
 }
 
-function install_server_dsn($input) {
-    return 'mysql:host='.$input['db_host'].';port='.$input['db_port'].';charset=utf8mb4';
-}
-
 function install_database_dsn($input) {
     return 'mysql:host='.$input['db_host'].';port='.$input['db_port']
         .';dbname='.$input['db_name'].';charset=utf8mb4';
-}
-
-function install_provision_database($input) {
-    $connection = install_connect(
-        install_server_dsn($input), $input['root_user'], $input['root_password']);
-
-    $connection->exec(
-        'CREATE DATABASE IF NOT EXISTS '.install_quote_identifier($input['db_name'])
-        .' CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
-
-    /* CREATE/ALTER USER reject bound parameters, so the password is quoted by the
-       driver and inlined instead. */
-    $account = $connection->quote($input['db_user']).'@'.$connection->quote($input['db_user_host']);
-    $password = $connection->quote($input['db_password']);
-    $connection->exec('CREATE USER IF NOT EXISTS '.$account.' IDENTIFIED BY '.$password);
-    $connection->exec('ALTER USER '.$account.' IDENTIFIED BY '.$password);
-
-    $connection->exec(
-        'GRANT SELECT, INSERT, UPDATE, DELETE ON '
-        .install_quote_identifier($input['db_name']).'.* TO '.$account);
-    $connection->exec('FLUSH PRIVILEGES');
 }
 
 function install_import_schema($connection) {
@@ -275,7 +242,13 @@ function install_config_contents($input) {
         ."        'max_object_bytes' => 268435456,\n"
         ."        'max_pack_objects' => 100000,\n"
         ."        'max_request_bytes' => 0));\n\n"
-        ."\$repos = array();\n";
+        ."\$repos = array(\n"
+        ."    array('/php-git-server.git', '.git', array(\n"
+        ."        'read' => TRUE,\n"
+        ."        'push' => FALSE,\n"
+        ."        'owner' => NULL,\n"
+        ."        'private' => FALSE)),\n"
+        ."    );\n";
 }
 
 /* Exclusive creation keeps a second concurrent installer from overwriting a
@@ -303,45 +276,34 @@ function install_run($input) {
     $steps = array();
 
     try {
-        if ($input['provision']) {
-            install_provision_database($input);
-            $steps[] = array('success', '数据库与应用账号已创建或更新，并已授予所需权限。');
-        }
+        $connection = install_connect(
+            install_database_dsn($input), $input['db_user'], $input['db_password']);
+        $steps[] = array('success', '已使用数据库账号连接成功。');
 
-        /* The application account deliberately has no CREATE privilege, so the
-           schema is imported over the administrative connection when available. */
-        $schema_connection = $input['provision']
-            ? install_connect(
-                install_database_dsn($input), $input['root_user'], $input['root_password'])
-            : install_connect(
-                install_database_dsn($input), $input['db_user'], $input['db_password']);
-
-        $import = install_import_schema($schema_connection);
+        $import = install_import_schema($connection);
         if ($import['status'] === 'schema_unreadable') {
             return array('errors' => array('无法读取 schema.mysql.sql。'), 'steps' => $steps);
         }
         if ($import['status'] === 'schema_denied') {
             return array(
                 'errors' => array(
-                    '应用账号没有建表权限，无法导入表结构。请先手动导入 schema.mysql.sql，'
-                    .'或勾选“自动创建数据库”并填写管理账号。'),
+                    '该数据库账号没有建表权限。请用主机面板的 phpMyAdmin 或数据库导入功能'
+                    .'导入项目根目录的 schema.mysql.sql，然后重新提交本页面；'
+                    .'安装器会自动识别已存在的表并跳过导入。'),
                 'steps' => $steps);
         }
         $steps[] = $import['status'] === 'schema_imported'
             ? array('success', '已导入 '.$import['tables'].' 张表。')
             : array('success', '检测到已存在的 pgit_ 表，跳过导入。');
 
-        $connection = install_connect(
-            install_database_dsn($input), $input['db_user'], $input['db_password']);
-        $steps[] = array('success', '已使用应用账号连接数据库。');
-
         if (!install_verify_delete_privilege($connection)) {
             return array(
                 'errors' => array(
-                    '应用账号缺少 DELETE 权限，删除仓库和用户会失败。请授予 DELETE 后重试。'),
+                    '该数据库账号缺少 DELETE 权限，删除仓库和用户会失败。'
+                    .'请在主机面板或数据库中为该账号授予 DELETE 权限后重试。'),
                 'steps' => $steps);
         }
-        $steps[] = array('success', '已确认应用账号具备 SELECT、INSERT、UPDATE 和 DELETE 权限。');
+        $steps[] = array('success', '已确认账号具备 SELECT、INSERT、UPDATE 和 DELETE 权限。');
 
         $administrator = install_create_administrator(
             $connection, $input['admin_username'], $input['admin_password']);
@@ -435,8 +397,8 @@ function install_send_form($input, $errors) {
         return;
     }
 
-    echo '<p class="lead">检测到项目根目录没有 <code>config.php</code>。填写以下信息即可创建'
-        .'数据库表、首个管理员账号并生成配置文件。</p>' ."\n";
+    echo '<p class="lead">检测到项目根目录没有 <code>config.php</code>。请先准备好一个空数据库'
+        .'和对应账号，填写以下信息即可导入表结构、创建首个管理员账号并生成配置文件。</p>' ."\n";
     if (!install_request_is_https()) {
         echo '<p class="notice notice-warning">当前不是 HTTPS 连接。密码将以明文传输，'
             .'建议改用 HTTPS 或仅从本机访问安装页面。</p>' ."\n";
@@ -477,34 +439,28 @@ function install_send_form($input, $errors) {
         .'<label for="session_cookie_secure">HTTPS 在可信反向代理终止（设置 Secure Cookie）</label>'
         .'</div></fieldset>' ."\n";
 
-    echo '<fieldset><legend>数据库</legend><div class="grid">' ."\n";
+    echo '<fieldset><legend>数据库</legend>' ."\n";
+    echo '<p class="hint">请先自行创建好数据库和账号，安装器不会创建它们，也不需要 root 权限。'
+        .'账号需对该库具有 SELECT、INSERT、UPDATE 和 DELETE 权限；'
+        .'若还具有建表权限，安装器会自动导入表结构。</p>' ."\n";
+    echo '<div class="grid">' ."\n";
     echo '<div><label for="db_host">主机</label><input id="db_host" name="db_host" type="text" '
-        .'value="'.install_escape($input['db_host']).'" required></div>' ."\n";
+        .'value="'.install_escape($input['db_host']).'" required>'
+        .'<p class="hint">共享主机通常是 <code>localhost</code>。</p></div>' ."\n";
     echo '<div><label for="db_port">端口</label><input id="db_port" name="db_port" '
         .'type="number" min="1" max="65535" value="'.install_escape($input['db_port'])
         .'" required></div>' ."\n";
     echo '<div><label for="db_name">数据库名</label><input id="db_name" name="db_name" '
-        .'type="text" value="'.install_escape($input['db_name']).'" required></div>' ."\n";
-    echo '<div><label for="db_user">应用账号</label><input id="db_user" name="db_user" '
+        .'type="text" value="'.install_escape($input['db_name']).'" required>'
+        .'<p class="hint">面板生成的名称通常带前缀，例如 <code>cpuser_git</code>。</p></div>' ."\n";
+    echo '<div><label for="db_user">数据库账号</label><input id="db_user" name="db_user" '
         .'type="text" value="'.install_escape($input['db_user']).'" required></div>' ."\n";
-    echo '<div><label for="db_password">应用账号密码</label><input id="db_password" '
+    echo '<div><label for="db_password">数据库账号密码</label><input id="db_password" '
         .'name="db_password" type="password" autocomplete="new-password" required></div>' ."\n";
-    echo '<div><label for="db_user_host">账号来源主机</label><input id="db_user_host" '
-        .'name="db_user_host" type="text" value="'.install_escape($input['db_user_host']).'">'
-        .'<p class="hint">MySQL 账号的 host 部分，需与连接方式一致。</p></div>' ."\n";
-    echo '</div></fieldset>' ."\n";
-
-    echo '<fieldset><legend>自动创建数据库（可选）</legend>' ."\n";
-    echo '<div class="check"><input id="provision" name="provision" type="checkbox" value="1"'
-        .($input['provision'] ? ' checked' : '').'>'
-        .'<label for="provision">使用管理账号创建数据库与应用账号，并授予所需权限</label></div>' ."\n";
-    echo '<p class="hint">不勾选时，请先手动创建数据库和账号；安装仍会校验 DELETE 权限。</p>' ."\n";
-    echo '<div class="grid">' ."\n";
-    echo '<div><label for="root_user">管理账号</label><input id="root_user" name="root_user" '
-        .'type="text" value="'.install_escape($input['root_user']).'"></div>' ."\n";
-    echo '<div><label for="root_password">管理账号密码</label><input id="root_password" '
-        .'name="root_password" type="password" autocomplete="off"></div>' ."\n";
-    echo '</div></fieldset>' ."\n";
+    echo '</div>' ."\n";
+    echo '<p class="hint">若该账号没有建表权限，请先用面板的 phpMyAdmin 导入 '
+        .'<code>schema.mysql.sql</code>，再提交本页面；已存在的表会被自动跳过。</p>' ."\n";
+    echo '</fieldset>' ."\n";
 
     echo '<fieldset><legend>管理员账号</legend>' ."\n";
     echo '<p class="hint">该账号会写入 <code>$auth[\'administrators\']</code>，'
@@ -514,11 +470,11 @@ function install_send_form($input, $errors) {
         .'name="admin_username" type="text" minlength="3" maxlength="64" value="'
         .install_escape($input['admin_username']).'" autocomplete="off" required></div>' ."\n";
     echo '<div><label for="admin_password">密码</label><input id="admin_password" '
-        .'name="admin_password" type="password" minlength="12" maxlength="72" '
+        .'name="admin_password" type="password" minlength="8" maxlength="72" '
         .'autocomplete="new-password" required></div>' ."\n";
     echo '<div><label for="admin_password_confirmation">确认密码</label>'
         .'<input id="admin_password_confirmation" name="admin_password_confirmation" '
-        .'type="password" minlength="12" maxlength="72" autocomplete="new-password" required>'
+        .'type="password" minlength="8" maxlength="72" autocomplete="new-password" required>'
         .'</div>' ."\n";
     echo '</div></fieldset>' ."\n";
 
@@ -534,8 +490,9 @@ function install_send_result($steps) {
     }
 
     echo '<h2>请立即完成以下操作</h2>' ."\n";
-    echo '<p>删除或禁止访问安装脚本，避免它在配置被移除后再次可用：</p>' ."\n";
+    echo '<p>删除安装脚本，避免它在配置被移除后再次可用。有 shell 时执行：</p>' ."\n";
     echo '<pre><code>rm install.php</code></pre>' ."\n";
+    echo '<p>共享主机可用面板的文件管理器或 FTP 直接删除 <code>install.php</code>。</p>' ."\n";
     echo '<p>确认 <code>config.php</code> 仅应用进程可读，并检查 <code>repos</code> 目录权限。'
         .'详细说明见 <code>usage.md</code>。</p>' ."\n";
     echo '<p><a href="'.install_escape(install_home_url()).'">进入首页并登录</a></p>' ."\n";
@@ -582,10 +539,7 @@ $input = array(
     'db_name' => 'php_git_server',
     'db_user' => 'php_git_server',
     'db_password' => '',
-    'db_user_host' => '127.0.0.1',
-    'provision' => FALSE,
-    'root_user' => 'root',
-    'root_password' => '',
+
     'admin_username' => '',
     'admin_password' => '',
     'admin_password_confirmation' => '');
@@ -618,17 +572,9 @@ $input = array(
     'db_name' => trim(install_post_value('db_name')),
     'db_user' => trim(install_post_value('db_user')),
     'db_password' => install_post_value('db_password'),
-    'db_user_host' => trim(install_post_value('db_user_host')),
-    'provision' => install_post_checked('provision'),
-    'root_user' => trim(install_post_value('root_user')),
-    'root_password' => install_post_value('root_password'),
     'admin_username' => trim(install_post_value('admin_username')),
     'admin_password' => install_post_value('admin_password'),
     'admin_password_confirmation' => install_post_value('admin_password_confirmation'));
-
-if ($input['db_user_host'] === '') {
-    $input['db_user_host'] = $input['db_host'];
-}
 
 $errors = install_validate($input);
 if (!extension_loaded('pdo_mysql')) {

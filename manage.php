@@ -110,7 +110,7 @@ function manage_result_notice($result) {
         case 'invalid_username':
             return array('error', '用户名须为 3 至 64 个字母、数字、点、短横线或下划线。');
         case 'invalid_password':
-            return array('error', '密码长度须为 12 至 72 个字符，且不能超过 72 字节。');
+            return array('error', '密码长度须为 8 至 72 个字符，且不能超过 72 字节。');
         case 'password_mismatch':
             return array('error', '两次输入的密码不一致。');
         case 'username_exists':
@@ -365,10 +365,10 @@ function manage_send_create_user($url_base, $csrf_token) {
     echo '<div><label for="new-username">用户名</label><input id="new-username" name="username" '
         .'minlength="3" maxlength="64" autocomplete="off" required></div>' ."\n";
     echo '<div><label for="new-password">初始密码</label><input id="new-password" name="password" '
-        .'type="password" minlength="12" maxlength="72" autocomplete="new-password" required></div>' ."\n";
+        .'type="password" minlength="8" maxlength="72" autocomplete="new-password" required></div>' ."\n";
     echo '<div><label for="new-password-confirmation">确认密码</label>'
         .'<input id="new-password-confirmation" name="password_confirmation" type="password" '
-        .'minlength="12" maxlength="72" autocomplete="new-password" required></div>' ."\n";
+        .'minlength="8" maxlength="72" autocomplete="new-password" required></div>' ."\n";
     echo '<button type="submit">创建用户</button></form></section>' ."\n";
 }
 
@@ -436,9 +436,9 @@ function manage_send_users($url_base, $csrf_token, $users, $administrator) {
         echo '</div></td><td><details><summary>重置密码</summary>';
         echo '<form method="post" action="'.$action_url.'">'
             .manage_hidden_fields($csrf_token, 'reset_user_password', $user['id']);
-        echo '<input name="password" type="password" minlength="12" maxlength="72" '
+        echo '<input name="password" type="password" minlength="8" maxlength="72" '
             .'autocomplete="new-password" aria-label="新密码" placeholder="新密码" required>';
-        echo '<input name="password_confirmation" type="password" minlength="12" maxlength="72" '
+        echo '<input name="password_confirmation" type="password" minlength="8" maxlength="72" '
             .'autocomplete="new-password" aria-label="确认新密码" placeholder="确认新密码" required>';
         echo '<button type="submit">保存新密码</button></form></details></td></tr>' ."\n";
     }

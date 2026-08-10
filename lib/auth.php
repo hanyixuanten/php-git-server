@@ -139,7 +139,7 @@ function auth_normalize_username($value) {
 function auth_password_is_valid($password) {
     return is_string($password)
         && strlen($password) <= 72
-        && preg_match('~^.{12,72}$~usD', $password) === 1;
+        && preg_match('~^.{8,72}$~usD', $password) === 1;
 }
 
 function auth_find_active_user_by_id($database, $user_id) {

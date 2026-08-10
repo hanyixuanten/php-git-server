@@ -150,7 +150,7 @@ function home_auth_result_notice($result) {
         case 'invalid_username':
             return array('error', '用户名须为 3 至 64 个字母、数字、点、短横线或下划线。');
         case 'invalid_password':
-            return array('error', '密码长度须为 12 至 72 个字符，且不能超过 72 字节。');
+            return array('error', '密码长度须为 8 至 72 个字符，且不能超过 72 字节。');
         case 'password_mismatch':
             return array('error', '两次输入的密码不一致。');
         case 'username_exists':
@@ -615,7 +615,7 @@ function home_send_authentication($url_base, $configuration, $notice) {
         echo '<div class="credentials"><div><label for="login-username">用户名</label>' ."\n";
         echo '<input id="login-username" name="username" maxlength="64" autocomplete="username" required></div>' ."\n";
         echo '<div><label for="login-password">密码</label>' ."\n";
-        echo '<input id="login-password" name="password" type="password" minlength="12" maxlength="72" autocomplete="current-password" required></div></div>' ."\n";
+        echo '<input id="login-password" name="password" type="password" minlength="8" maxlength="72" autocomplete="current-password" required></div></div>' ."\n";
         echo '<button type="submit">登录</button></form>' ."\n";
 
         if (auth_registration_is_enabled()) {
@@ -624,9 +624,9 @@ function home_send_authentication($url_base, $configuration, $notice) {
             echo '<div class="credentials"><div><label for="register-username">注册用户名</label>' ."\n";
             echo '<input id="register-username" name="username" minlength="3" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-]" autocomplete="username" required></div>' ."\n";
             echo '<div><label for="register-password">密码</label>' ."\n";
-            echo '<input id="register-password" name="password" type="password" minlength="12" maxlength="72" autocomplete="new-password" required></div>' ."\n";
+            echo '<input id="register-password" name="password" type="password" minlength="8" maxlength="72" autocomplete="new-password" required></div>' ."\n";
             echo '<div><label for="register-password-confirmation">确认密码</label>' ."\n";
-            echo '<input id="register-password-confirmation" name="password_confirmation" type="password" minlength="12" maxlength="72" autocomplete="new-password" required></div></div>' ."\n";
+            echo '<input id="register-password-confirmation" name="password_confirmation" type="password" minlength="8" maxlength="72" autocomplete="new-password" required></div></div>' ."\n";
             echo '<button type="submit">注册</button></form>' ."\n";
         }
         echo '</div>' ."\n";
