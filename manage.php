@@ -1,5 +1,10 @@
 <?php
 
+if (!file_exists(__DIR__.'/config.php')) {
+    require(__DIR__.'/lib/install_redirect.php');
+    redirect_to_installer();
+}
+
 require(__DIR__.'/config.php');
 require(__DIR__.'/lib/http.php');
 require(__DIR__.'/lib/auth.php');
