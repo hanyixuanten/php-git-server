@@ -279,29 +279,29 @@ details { min-width: 15rem; } summary { cursor: pointer; font-weight: 700; } det
 </head>
 <body>
 HTML;
-    echo '<header><div class="header-inner"><div><h1>PHP Git 服务器 / 管理</h1>' ."\n";
-    echo '<p class="identity">管理员：<strong>'.manage_escape($administrator['username'])
+    echo '<header><div class="header-inner"><div><h1>'.manage_escape(t('manage.heading')).'</h1>' ."\n";
+    echo '<p class="identity">'.manage_escape(t('manage.administrator_label')).'：<strong>'.manage_escape($administrator['username'])
         .'</strong></p></div>' ."\n";
-    echo '<nav><a href="'.manage_escape(manage_home_url($url_base)).'">返回仓库首页</a> '
+    echo '<nav><a href="'.manage_escape(manage_home_url($url_base)).'">'.manage_escape(t('manage.back_to_home')).'</a> '
         .i18n_language_switcher(manage_page_url($url_base));
     echo '</nav></div></header>' ."\n";
 }
 
 function manage_send_create_user($url_base, $csrf_token) {
-    echo '<section aria-labelledby="create-user-title"><h2 id="create-user-title">创建用户</h2>' ."\n";
-    echo '<p class="section-lead">管理员创建的账号会立即启用。</p>' ."\n";
+    echo '<section aria-labelledby="create-user-title"><h2 id="create-user-title">'.manage_escape(t('manage.create_user_title')).'</h2>' ."\n";
+    echo '<p class="section-lead">'.manage_escape(t('manage.create_user_lead')).'</p>' ."\n";
     echo '<form class="create-user" method="post" action="'
         .manage_escape(manage_page_url($url_base)).'">' ."\n";
     echo '<input type="hidden" name="csrf_token" value="'.manage_escape($csrf_token).'">' ."\n";
     echo '<input type="hidden" name="action" value="create_user">' ."\n";
-    echo '<div><label for="new-username">用户名</label><input id="new-username" name="username" '
+    echo '<div><label for="new-username">'.manage_escape(t('manage.label_username')).'</label><input id="new-username" name="username" '
         .'minlength="3" maxlength="64" autocomplete="off" required></div>' ."\n";
-    echo '<div><label for="new-password">初始密码</label><input id="new-password" name="password" '
+    echo '<div><label for="new-password">'.manage_escape(t('manage.label_initial_password')).'</label><input id="new-password" name="password" '
         .'type="password" minlength="8" maxlength="72" autocomplete="new-password" required></div>' ."\n";
-    echo '<div><label for="new-password-confirmation">确认密码</label>'
+    echo '<div><label for="new-password-confirmation">'.manage_escape(t('manage.label_password_confirmation')).'</label>'
         .'<input id="new-password-confirmation" name="password_confirmation" type="password" '
         .'minlength="8" maxlength="72" autocomplete="new-password" required></div>' ."\n";
-    echo '<button type="submit">创建用户</button></form></section>' ."\n";
+    echo '<button type="submit">'.manage_escape(t('manage.button_create_user')).'</button></form></section>' ."\n";
 }
 
 function manage_hidden_fields($csrf_token, $action, $user_id=NULL) {
@@ -317,32 +317,32 @@ function manage_hidden_fields($csrf_token, $action, $user_id=NULL) {
 }
 
 function manage_send_users($url_base, $csrf_token, $users, $administrator) {
-    echo '<section aria-labelledby="users-title"><h2 id="users-title">用户</h2>' ."\n";
-    echo '<p class="section-lead">停用会立即阻止网页登录和 Access Token 认证。删除用户前必须先处理其仓库。</p>' ."\n";
+    echo '<section aria-labelledby="users-title"><h2 id="users-title">'.manage_escape(t('manage.users_title')).'</h2>' ."\n";
+    echo '<p class="section-lead">'.manage_escape(t('manage.users_lead')).'</p>' ."\n";
     if ($users === FALSE) {
-        echo '<p class="notice notice-error">当前无法读取用户列表。</p></section>' ."\n";
+        echo '<p class="notice notice-error">'.manage_escape(t('manage.users_unavailable')).'</p></section>' ."\n";
         return;
     }
     if (empty($users)) {
-        echo '<p class="empty">当前没有用户。</p></section>' ."\n";
+        echo '<p class="empty">'.manage_escape(t('manage.users_empty')).'</p></section>' ."\n";
         return;
     }
 
     $action_url = manage_escape(manage_page_url($url_base));
-    echo '<div class="table-wrap"><table><thead><tr><th>用户</th><th>状态</th><th>仓库</th>'
-        .'<th>有效 Token</th><th>创建时间</th><th>账号操作</th><th>密码</th></tr></thead><tbody>' ."\n";
+    echo '<div class="table-wrap"><table><thead><tr><th>'.manage_escape(t('manage.th_user')).'</th><th>'.manage_escape(t('manage.th_status')).'</th><th>'.manage_escape(t('manage.th_repositories')).'</th>'
+        .'<th>'.manage_escape(t('manage.th_active_tokens')).'</th><th>'.manage_escape(t('manage.th_created_at')).'</th><th>'.manage_escape(t('manage.th_account_actions')).'</th><th>'.manage_escape(t('manage.th_password')).'</th></tr></thead><tbody>' ."\n";
     foreach ($users as $user) {
         $active = (int) $user['is_active'] === 1;
         $is_administrator = auth_user_is_administrator($user);
         $is_self = (int) $user['id'] === (int) $administrator['id'];
         echo '<tr><td><code>'.manage_escape($user['username']).'</code><br>';
         if ($is_administrator) {
-            echo '<span class="badge badge-good">管理员</span>';
+            echo '<span class="badge badge-good">'.manage_escape(t('manage.badge_administrator')).'</span>';
         } else if ($is_self) {
-            echo '<span class="badge badge-muted">当前账号</span>';
+            echo '<span class="badge badge-muted">'.manage_escape(t('manage.badge_current_account')).'</span>';
         }
         echo '</td><td><span class="badge '.($active ? 'badge-good' : 'badge-warning').'">'
-            .($active ? '启用' : '停用').'</span></td>';
+            .manage_escape($active ? t('manage.badge_active') : t('manage.badge_inactive')).'</span></td>';
         echo '<td>'.manage_escape($user['repository_count']).'</td>';
         echo '<td>'.manage_escape($user['active_token_count']).'</td>';
         echo '<td>'.manage_escape($user['created_at']).'</td><td><div class="stack">';
@@ -351,28 +351,28 @@ function manage_send_users($url_base, $csrf_token, $users, $administrator) {
             echo '<form method="post" action="'.$action_url.'">'
                 .manage_hidden_fields($csrf_token, 'set_user_status', $user['id']);
             echo '<input type="hidden" name="active" value="'.($active ? '0' : '1').'">';
-            echo '<button class="button-muted" type="submit">'.($active ? '停用' : '启用').'</button></form>';
+            echo '<button class="button-muted" type="submit">'.manage_escape($active ? t('manage.button_deactivate') : t('manage.button_activate')).'</button></form>';
         }
 
         echo '<form method="post" action="'.$action_url.'">'
             .manage_hidden_fields($csrf_token, 'revoke_user_tokens', $user['id']);
-        echo '<button class="button-muted" type="submit">撤销全部 Token</button></form>';
+        echo '<button class="button-muted" type="submit">'.manage_escape(t('manage.button_revoke_all_tokens')).'</button></form>';
 
         if (!$is_administrator && !$is_self && (int) $user['repository_count'] === 0) {
             echo '<form class="stack" method="post" action="'.$action_url.'">'
                 .manage_hidden_fields($csrf_token, 'delete_user', $user['id']);
             echo '<label class="confirm"><input name="confirmation" type="checkbox" value="'
-                .manage_escape($user['username']).'" required> 确认删除账号</label>';
-            echo '<button class="button-danger" type="submit">删除用户</button></form>';
+                .manage_escape($user['username']).'" required> '.manage_escape(t('manage.confirm_delete_account')).'</label>';
+            echo '<button class="button-danger" type="submit">'.manage_escape(t('manage.button_delete_user')).'</button></form>';
         }
-        echo '</div></td><td><details><summary>重置密码</summary>';
+        echo '</div></td><td><details><summary>'.manage_escape(t('manage.summary_reset_password')).'</summary>';
         echo '<form method="post" action="'.$action_url.'">'
             .manage_hidden_fields($csrf_token, 'reset_user_password', $user['id']);
         echo '<input name="password" type="password" minlength="8" maxlength="72" '
-            .'autocomplete="new-password" aria-label="新密码" placeholder="新密码" required>';
+            .'autocomplete="new-password" aria-label="'.manage_escape(t('manage.placeholder_new_password')).'" placeholder="'.manage_escape(t('manage.placeholder_new_password')).'" required>';
         echo '<input name="password_confirmation" type="password" minlength="8" maxlength="72" '
-            .'autocomplete="new-password" aria-label="确认新密码" placeholder="确认新密码" required>';
-        echo '<button type="submit">保存新密码</button></form></details></td></tr>' ."\n";
+            .'autocomplete="new-password" aria-label="'.manage_escape(t('manage.placeholder_confirm_new_password')).'" placeholder="'.manage_escape(t('manage.placeholder_confirm_new_password')).'" required>';
+        echo '<button type="submit">'.manage_escape(t('manage.button_save_password')).'</button></form></details></td></tr>' ."\n";
     }
     echo '</tbody></table></div></section>' ."\n";
 }
@@ -380,21 +380,21 @@ function manage_send_users($url_base, $csrf_token, $users, $administrator) {
 function manage_repository_state($repository, $configuration, $definitions, $url_base) {
     $root = managed_repository_root($configuration);
     if ($root === FALSE) {
-        return array('badge-warning', '根目录不可用', FALSE);
+        return array('badge-warning', t('manage.state_root_unavailable'), FALSE);
     }
 
     $path = $root.DIRECTORY_SEPARATOR.$repository['repository_name'];
     if (managed_repository_path_is_configured($definitions, $url_base, $path)) {
-        return array('badge-warning', '静态配置', FALSE);
+        return array('badge-warning', t('manage.state_configured'), FALSE);
     }
     if (!managed_repository_is_bare($path)) {
-        return array('badge-warning', '仅记录', TRUE);
+        return array('badge-warning', t('manage.state_record_only'), TRUE);
     }
     if ((int) $repository['is_ready'] !== 1) {
-        return array('badge-warning', '未完成', TRUE);
+        return array('badge-warning', t('manage.state_incomplete'), TRUE);
     }
 
-    return array('badge-good', '可用', TRUE);
+    return array('badge-good', t('manage.state_ready'), TRUE);
 }
 
 function manage_send_repositories(
@@ -404,20 +404,20 @@ function manage_send_repositories(
     $users,
     $configuration,
     $definitions) {
-    echo '<section aria-labelledby="repositories-title"><h2 id="repositories-title">托管仓库</h2>' ."\n";
-    echo '<p class="section-lead">此处操作数据库记录与 <code>repos</code> 目录中的受管 bare 仓库。</p>' ."\n";
+    echo '<section aria-labelledby="repositories-title"><h2 id="repositories-title">'.manage_escape(t('manage.repositories_title')).'</h2>' ."\n";
+    echo '<p class="section-lead">'.t('manage.repositories_lead').'</p>' ."\n";
     if ($repositories === FALSE) {
-        echo '<p class="notice notice-error">当前无法读取托管仓库列表。</p></section>' ."\n";
+        echo '<p class="notice notice-error">'.manage_escape(t('manage.repositories_unavailable')).'</p></section>' ."\n";
         return;
     }
     if (empty($repositories)) {
-        echo '<p class="empty">当前没有托管仓库。</p></section>' ."\n";
+        echo '<p class="empty">'.manage_escape(t('manage.repositories_empty')).'</p></section>' ."\n";
         return;
     }
 
     $action_url = manage_escape(manage_page_url($url_base));
-    echo '<div class="table-wrap"><table><thead><tr><th>仓库</th><th>状态</th><th>所有者与可见性</th>'
-        .'<th>创建时间</th><th>删除</th></tr></thead><tbody>' ."\n";
+    echo '<div class="table-wrap"><table><thead><tr><th>'.manage_escape(t('manage.th_repository')).'</th><th>'.manage_escape(t('manage.th_status')).'</th><th>'.manage_escape(t('manage.th_owner_visibility')).'</th>'
+        .'<th>'.manage_escape(t('manage.th_created_at')).'</th><th>'.manage_escape(t('manage.th_delete')).'</th></tr></thead><tbody>' ."\n";
     foreach ($repositories as $repository) {
         $state = manage_repository_state(
             $repository, $configuration, $definitions, $url_base);
@@ -429,7 +429,7 @@ function manage_send_repositories(
         echo '<input type="hidden" name="action" value="update_repository">';
         echo '<input type="hidden" name="repository_id" value="'
             .manage_escape($repository['id']).'">';
-        echo '<select name="owner_user_id" aria-label="仓库所有者">';
+        echo '<select name="owner_user_id" aria-label="'.manage_escape(t('manage.aria_repository_owner')).'">';
         foreach ($users === FALSE ? array() : $users as $user) {
             if ((int) $user['is_active'] !== 1
                 && (int) $user['id'] !== (int) $repository['owner_user_id']) {
@@ -437,17 +437,17 @@ function manage_send_repositories(
             }
             echo '<option value="'.manage_escape($user['id']).'"'
                 .((int) $user['id'] === (int) $repository['owner_user_id'] ? ' selected' : '').'>'
-                .manage_escape($user['username']).((int) $user['is_active'] === 1 ? '' : '（已停用）')
+                .manage_escape($user['username']).((int) $user['is_active'] === 1 ? '' : manage_escape(t('manage.user_deactivated_suffix')))
                 .'</option>';
         }
-        echo '</select><select name="visibility" aria-label="仓库可见性">';
+        echo '</select><select name="visibility" aria-label="'.manage_escape(t('manage.aria_repository_visibility')).'">';
         echo '<option value="public"'.((int) $repository['is_private'] === 0 ? ' selected' : '')
-            .'>公开</option>';
+            .'>'.manage_escape(t('manage.public')).'</option>';
         echo '<option value="private"'.((int) $repository['is_private'] === 1 ? ' selected' : '')
-            .'>私有</option></select><button type="submit">保存</button></form></td>';
+            .'>'.manage_escape(t('manage.private')).'</option></select><button type="submit">'.manage_escape(t('manage.button_save')).'</button></form></td>';
         echo '<td>'.manage_escape($repository['created_at']).'</td><td>';
         if (!$state[2]) {
-            echo '<span class="badge badge-muted">不可删除</span>';
+            echo '<span class="badge badge-muted">'.manage_escape(t('manage.badge_not_deletable')).'</span>';
         } else {
             echo '<form class="stack" method="post" action="'.$action_url.'">';
             echo '<input type="hidden" name="csrf_token" value="'.manage_escape($csrf_token).'">';
@@ -455,8 +455,8 @@ function manage_send_repositories(
             echo '<input type="hidden" name="repository_name" value="'
                 .manage_escape($repository['repository_name']).'">';
             echo '<label class="confirm"><input name="confirmation" type="checkbox" value="'
-                .manage_escape($repository['repository_name']).'" required> 确认永久删除</label>';
-            echo '<button class="button-danger" type="submit">删除仓库</button></form>';
+                .manage_escape($repository['repository_name']).'" required> '.manage_escape(t('manage.confirm_permanent_delete')).'</label>';
+            echo '<button class="button-danger" type="submit">'.manage_escape(t('manage.button_delete_repository')).'</button></form>';
         }
         echo '</td></tr>' ."\n";
     }
@@ -464,8 +464,8 @@ function manage_send_repositories(
 }
 
 function manage_send_configured_repositories($url_base, $definitions) {
-    echo '<section aria-labelledby="configured-title"><h2 id="configured-title">配置仓库</h2>' ."\n";
-    echo '<p class="section-lead">这些仓库来自 <code>config.php</code>，管理界面只读显示，不修改配置或文件。</p>' ."\n";
+    echo '<section aria-labelledby="configured-title"><h2 id="configured-title">'.manage_escape(t('manage.configured_title')).'</h2>' ."\n";
+    echo '<p class="section-lead">'.t('manage.configured_lead').'</p>' ."\n";
     $repositories = array();
     foreach ($definitions as $definition) {
         $repository = normalize_repository($definition, $url_base);
@@ -474,21 +474,21 @@ function manage_send_configured_repositories($url_base, $definitions) {
         }
     }
     if (empty($repositories)) {
-        echo '<p class="empty">当前没有配置仓库。</p></section>' ."\n";
+        echo '<p class="empty">'.manage_escape(t('manage.configured_empty')).'</p></section>' ."\n";
         return;
     }
 
-    echo '<div class="table-wrap"><table><thead><tr><th>URL</th><th>路径</th><th>所有者</th>'
-        .'<th>可见性</th><th>读 / 写</th></tr></thead><tbody>' ."\n";
+    echo '<div class="table-wrap"><table><thead><tr><th>'.manage_escape(t('manage.th_url')).'</th><th>'.manage_escape(t('manage.th_path')).'</th><th>'.manage_escape(t('manage.th_owner_visibility')).'</th>'
+        .'<th>'.manage_escape(t('manage.th_visibility')).'</th><th>'.manage_escape(t('manage.th_read_write')).'</th></tr></thead><tbody>' ."\n";
     foreach ($repositories as $repository) {
         $owner = $repository['options']['owner'] === NULL
-            ? '未设置' : $repository['options']['owner'];
+            ? t('manage.value_unset') : $repository['options']['owner'];
         echo '<tr><td><code>'.manage_escape($repository['url']).'</code></td>';
         echo '<td><code>'.manage_escape($repository['path']).'</code></td>';
         echo '<td><code>'.manage_escape($owner).'</code></td>';
-        echo '<td>'.(repository_is_private($repository) ? '私有' : '公开').'</td>';
-        echo '<td>'.($repository['options']['read'] ? '读' : '禁用读取').' / '
-            .($repository['options']['push'] ? '写' : '只读').'</td></tr>' ."\n";
+        echo '<td>'.manage_escape(repository_is_private($repository) ? t('manage.private') : t('manage.public')).'</td>';
+        echo '<td>'.manage_escape($repository['options']['read'] ? t('manage.value_read') : t('manage.value_read_disabled')).' / '
+            .manage_escape($repository['options']['push'] ? t('manage.value_write') : t('manage.value_read_only')).'</td></tr>' ."\n";
     }
     echo '</tbody></table></div></section>' ."\n";
 }

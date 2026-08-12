@@ -166,6 +166,7 @@ function i18n_language_switcher($url) {
 function i18n_translate_markup($markup) {
     $markup = str_replace('__LANG__', htmlspecialchars(i18n_html_lang(), ENT_QUOTES, 'UTF-8'), $markup);
     $markup = str_replace('__TITLE__', htmlspecialchars(t('install.title'), ENT_QUOTES, 'UTF-8'), $markup);
+    $markup = str_replace('__INSTALL_HEADING__', htmlspecialchars(t('install.heading'), ENT_QUOTES, 'UTF-8'), $markup);
     if (i18n_language() === 'en') {
         $catalog = i18n_catalog_zh();
         $english = i18n_catalog_en();

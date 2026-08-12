@@ -303,7 +303,7 @@ function install_run($input) {
                 'errors' => array(t('install.error_delete_privilege')),
                 'steps' => $steps);
         }
-        $steps[] = array('success', t('install.step_privileges'));
+        $steps[] = array('success', t('install.step_privileges_ok'));
 
         $administrator = install_create_administrator(
             $connection, $input['admin_username'], $input['admin_password']);
@@ -344,7 +344,7 @@ form { padding:1.35rem;border:1px solid var(--line);border-radius:.9rem;backgrou
 </style>
 </head>
 <body>
-<h1>PHP Git 服务器安装</h1>
+<h1>__INSTALL_HEADING__</h1>
 HTML;
     echo i18n_language_switcher(install_page_url())."\n";
 }
@@ -352,23 +352,19 @@ HTML;
 function install_send_form($input, $errors) {
     $token = install_csrf_token();
     if ($token === FALSE) {
-        echo '<p class="notice notice-error">当前无法初始化安全会话，无法继续安装。</p>' ."\n";
+        echo '<p class="notice notice-error">'.install_escape(t('install.session_unavailable')).'</p>' ."\n";
         return;
     }
 
-    echo '<p class="lead">检测到项目根目录没有 <code>config.php</code>。请先准备好一个空数据库'
-        .'和对应账号，填写以下信息即可导入表结构、创建首个管理员账号并生成配置文件。</p>' ."\n";
+    echo '<p class="lead">'.t('install.lead').'</p>' ."\n";
     if (!install_request_is_https()) {
-        echo '<p class="notice notice-warning">当前不是 HTTPS 连接。密码将以明文传输，'
-            .'建议改用 HTTPS 或仅从本机访问安装页面。</p>' ."\n";
+        echo '<p class="notice notice-warning">'.t('install.warning_http').'</p>' ."\n";
     }
     if (!extension_loaded('pdo_mysql')) {
-        echo '<p class="notice notice-error">PHP 未启用 <code>pdo_mysql</code> 扩展，'
-            .'安装无法继续。请先安装该扩展并重启 PHP。</p>' ."\n";
+        echo '<p class="notice notice-error">'.t('install.error_no_pdo_mysql').'</p>' ."\n";
     }
     if (!is_writable(__DIR__)) {
-        echo '<p class="notice notice-error">项目目录不可写，无法生成 <code>config.php</code>。'
-            .'请调整目录权限后刷新。</p>' ."\n";
+        echo '<p class="notice notice-error">'.t('install.error_not_writable').'</p>' ."\n";
     }
     if (!empty($errors)) {
         echo '<div class="notice notice-error"><ul>' ."\n";
@@ -381,87 +377,82 @@ function install_send_form($input, $errors) {
     echo '<form method="post" action="'.install_escape(install_page_url()).'">' ."\n";
     echo '<input type="hidden" name="csrf_token" value="'.install_escape($token).'">' ."\n";
 
-    echo '<fieldset><legend>应用</legend><div class="grid">' ."\n";
-    echo '<div><label for="url_base">基础路径</label>'
+    echo '<fieldset><legend>'.install_escape(t('install.legend_application')).'</legend><div class="grid">' ."\n";
+    echo '<div><label for="url_base">'.install_escape(t('install.label_url_base')).'</label>'
         .'<input id="url_base" name="url_base" type="text" value="'
         .install_escape($input['url_base']).'" placeholder="/php-git-server">'
-        .'<p class="hint">部署在域名根路径时留空。</p></div>' ."\n";
-    echo '<div><label for="git_executable">Git 可执行文件</label>'
+        .'<p class="hint">'.t('install.hint_url_base').'</p></div>' ."\n";
+    echo '<div><label for="git_executable">'.install_escape(t('install.label_git_executable')).'</label>'
         .'<input id="git_executable" name="git_executable" type="text" value="'
         .install_escape($input['git_executable']).'" required>'
-        .'<p class="hint">不可用时会回退到纯 PHP 实现。</p></div>' ."\n";
+        .'<p class="hint">'.t('install.hint_git_executable').'</p></div>' ."\n";
     echo '<div><label for="language">'.install_escape(t('install.label_language')).'</label>'
         .'<select id="language" name="language">'
         .'<option value=""'.($input['language'] === '' ? ' selected' : '').'>'
         .install_escape(t('install.language_auto')).'</option>'
-        .'<option value="en"'.($input['language'] === 'en' ? ' selected' : '').'>English</option>'
-        .'<option value="zh"'.($input['language'] === 'zh' ? ' selected' : '').'>中文</option>'
+        .'<option value="en"'.($input['language'] === 'en' ? ' selected' : '').'>'.install_escape(t('install.language_en')).'</option>'
+        .'<option value="zh"'.($input['language'] === 'zh' ? ' selected' : '').'>'.install_escape(t('install.language_zh')).'</option>'
         .'</select></div>' ."\n";
     echo '</div><div class="check"><input id="registration_enabled" name="registration_enabled" '
         .'type="checkbox" value="1"'.($input['registration_enabled'] ? ' checked' : '').'>'
-        .'<label for="registration_enabled">允许公开注册新账号</label></div>' ."\n";
+        .'<label for="registration_enabled">'.install_escape(t('install.label_registration_enabled')).'</label></div>' ."\n";
     echo '<div class="check"><input id="session_cookie_secure" name="session_cookie_secure" '
         .'type="checkbox" value="1"'.($input['session_cookie_secure'] ? ' checked' : '').'>'
-        .'<label for="session_cookie_secure">HTTPS 在可信反向代理终止（设置 Secure Cookie）</label>'
+        .'<label for="session_cookie_secure">'.install_escape(t('install.label_session_cookie_secure')).'</label>'
         .'</div></fieldset>' ."\n";
 
-    echo '<fieldset><legend>数据库</legend>' ."\n";
-    echo '<p class="hint">请先自行创建好数据库和账号，安装器不会创建它们，也不需要 root 权限。'
-        .'账号需对该库具有 SELECT、INSERT、UPDATE 和 DELETE 权限；'
-        .'若还具有建表权限，安装器会自动导入表结构。</p>' ."\n";
+    echo '<fieldset><legend>'.install_escape(t('install.legend_database')).'</legend>' ."\n";
+    echo '<p class="hint">'.t('install.hint_database').'</p>' ."\n";
     echo '<div class="grid">' ."\n";
-    echo '<div><label for="db_host">主机</label><input id="db_host" name="db_host" type="text" '
+    echo '<div><label for="db_host">'.install_escape(t('install.label_db_host')).'</label><input id="db_host" name="db_host" type="text" '
         .'value="'.install_escape($input['db_host']).'" required>'
-        .'<p class="hint">共享主机通常是 <code>localhost</code>。</p></div>' ."\n";
-    echo '<div><label for="db_port">端口</label><input id="db_port" name="db_port" '
+        .'<p class="hint">'.t('install.hint_db_host').'</p></div>' ."\n";
+    echo '<div><label for="db_port">'.install_escape(t('install.label_db_port')).'</label><input id="db_port" name="db_port" '
         .'type="number" min="1" max="65535" value="'.install_escape($input['db_port'])
         .'" required></div>' ."\n";
-    echo '<div><label for="db_name">数据库名</label><input id="db_name" name="db_name" '
+    echo '<div><label for="db_name">'.install_escape(t('install.label_db_name')).'</label><input id="db_name" name="db_name" '
         .'type="text" value="'.install_escape($input['db_name']).'" required>'
-        .'<p class="hint">面板生成的名称通常带前缀，例如 <code>cpuser_git</code>。</p></div>' ."\n";
-    echo '<div><label for="db_user">数据库账号</label><input id="db_user" name="db_user" '
+        .'<p class="hint">'.t('install.hint_db_name').'</p></div>' ."\n";
+    echo '<div><label for="db_user">'.install_escape(t('install.label_db_user')).'</label><input id="db_user" name="db_user" '
         .'type="text" value="'.install_escape($input['db_user']).'" required></div>' ."\n";
-    echo '<div><label for="db_password">数据库账号密码</label><input id="db_password" '
+    echo '<div><label for="db_password">'.install_escape(t('install.label_db_password')).'</label><input id="db_password" '
         .'name="db_password" type="password" autocomplete="new-password" required></div>' ."\n";
     echo '</div>' ."\n";
-    echo '<p class="hint">若该账号没有建表权限，请先用面板的 phpMyAdmin 导入 '
-        .'<code>schema.mysql.sql</code>，再提交本页面；已存在的表会被自动跳过。</p>' ."\n";
+    echo '<p class="hint">'.t('install.hint_schema_import').'</p>' ."\n";
     echo '</fieldset>' ."\n";
 
-    echo '<fieldset><legend>管理员账号</legend>' ."\n";
-    echo '<p class="hint">该账号会写入 <code>$auth[\'administrators\']</code>，'
-        .'安装完成后即可访问管理界面。</p>' ."\n";
+    echo '<fieldset><legend>'.install_escape(t('install.legend_administrator')).'</legend>' ."\n";
+    echo '<p class="hint">'.t('install.hint_administrator').'</p>' ."\n";
     echo '<div class="grid">' ."\n";
-    echo '<div><label for="admin_username">用户名</label><input id="admin_username" '
+    echo '<div><label for="admin_username">'.install_escape(t('install.label_admin_username')).'</label><input id="admin_username" '
         .'name="admin_username" type="text" minlength="3" maxlength="64" value="'
         .install_escape($input['admin_username']).'" autocomplete="off" required></div>' ."\n";
-    echo '<div><label for="admin_password">密码</label><input id="admin_password" '
+    echo '<div><label for="admin_password">'.install_escape(t('install.label_admin_password')).'</label><input id="admin_password" '
         .'name="admin_password" type="password" minlength="8" maxlength="72" '
         .'autocomplete="new-password" required></div>' ."\n";
-    echo '<div><label for="admin_password_confirmation">确认密码</label>'
+    echo '<div><label for="admin_password_confirmation">'.install_escape(t('install.label_admin_password_confirmation')).'</label>'
         .'<input id="admin_password_confirmation" name="admin_password_confirmation" '
         .'type="password" minlength="8" maxlength="72" autocomplete="new-password" required>'
         .'</div>' ."\n";
     echo '</div></fieldset>' ."\n";
 
-    echo '<button type="submit">开始安装</button>' ."\n";
+    echo '<button type="submit">'.install_escape(t('install.button_submit')).'</button>' ."\n";
     echo '</form>' ."\n";
 }
 
 function install_send_result($steps) {
-    echo '<p class="notice notice-success">安装完成。</p>' ."\n";
+    echo '<p class="notice notice-success">'.install_escape(t('install.complete')).'</p>' ."\n";
     foreach ($steps as $step) {
         echo '<p class="notice notice-'.install_escape($step[0]).'">'
             .install_escape($step[1]).'</p>' ."\n";
     }
 
-    echo '<h2>请立即完成以下操作</h2>' ."\n";
-    echo '<p>删除安装脚本，避免它在配置被移除后再次可用。有 shell 时执行：</p>' ."\n";
+    echo '<h2>'.install_escape(t('install.next_steps_title')).'</h2>' ."\n";
+    echo '<p>'.install_escape(t('install.next_steps_remove')).'</p>' ."\n";
     echo '<pre><code>rm install.php</code></pre>' ."\n";
-    echo '<p>共享主机可用面板的文件管理器或 FTP 直接删除 <code>install.php</code>。</p>' ."\n";
-    echo '<p>确认 <code>config.php</code> 仅应用进程可读，并检查 <code>repos</code> 目录权限。'
-        .'详细说明见 <code>usage.md</code>。</p>' ."\n";
-    echo '<p><a href="'.install_escape(install_home_url()).'">进入首页并登录</a></p>' ."\n";
+    echo '<p>'.t('install.next_steps_shared_hosting').'</p>' ."\n";
+    echo '<p>'.t('install.next_steps_permissions').'</p>' ."\n";
+    echo '<p><a href="'.install_escape(install_home_url()).'">'.install_escape(t('install.link_home')).'</a></p>' ."\n";
 }
 
 function install_send_foot() {
