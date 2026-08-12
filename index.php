@@ -7,6 +7,7 @@ if (!file_exists(__DIR__.'/config.php')) {
 
 require(__DIR__.'/config.php');
 require(__DIR__.'/lib/http.php');
+require(__DIR__.'/lib/i18n.php');
 require(__DIR__.'/lib/auth.php');
 require(__DIR__.'/lib/repository.php');
 require(__DIR__.'/lib/router.php');
@@ -141,34 +142,20 @@ function home_require_csrf($url_base, $configuration) {
 
 function home_auth_result_notice($result) {
     switch ($result['status']) {
-        case 'registered':
-            return array('success', '账号已注册并登录。');
-        case 'logged_in':
-            return array('success', '登录成功。');
-        case 'registration_disabled':
-            return array('error', '当前不允许注册新账号。');
-        case 'invalid_username':
-            return array('error', '用户名须为 3 至 64 个字母、数字、点、短横线或下划线。');
-        case 'invalid_password':
-            return array('error', '密码长度须为 8 至 72 个字符，且不能超过 72 字节。');
-        case 'password_mismatch':
-            return array('error', '两次输入的密码不一致。');
-        case 'username_exists':
-            return array('error', '该用户名已存在或不可用。');
-        case 'invalid_credentials':
-            return array('error', '用户名或密码错误。');
-        case 'invalid_token_name':
-            return array('error', 'Token 名称不能为空，且最多 80 个字符。');
-        case 'token_created':
-            return array('success', 'Access token 已创建。请立即保存，关闭页面后无法再次查看。');
-        case 'token_revoked':
-            return array('success', 'Access token 已撤销。');
-        case 'invalid_token':
-            return array('error', 'Access token 不存在或已撤销。');
-        case 'session_unavailable':
-            return array('error', '当前无法建立安全会话。');
-        default:
-            return array('error', '认证数据库当前不可用。');
+        case 'registered':          return array('success', t('notice.registered'));
+        case 'logged_in':           return array('success', t('notice.logged_in'));
+        case 'registration_disabled': return array('error', t('notice.registration_disabled'));
+        case 'invalid_username':    return array('error', t('notice.invalid_username'));
+        case 'invalid_password':    return array('error', t('notice.invalid_password'));
+        case 'password_mismatch':   return array('error', t('notice.password_mismatch'));
+        case 'username_exists':     return array('error', t('notice.username_exists'));
+        case 'invalid_credentials': return array('error', t('notice.invalid_credentials'));
+        case 'invalid_token_name':  return array('error', t('notice.invalid_token_name'));
+        case 'token_created':       return array('success', t('notice.token_created'));
+        case 'token_revoked':       return array('success', t('notice.token_revoked'));
+        case 'invalid_token':       return array('error', t('notice.invalid_token'));
+        case 'session_unavailable': return array('error', t('notice.session_unavailable'));
+        default:                    return array('error', t('notice.auth_database_unavailable'));
     }
 }
 
@@ -200,7 +187,7 @@ function home_handle_auth_action($url_base, $configuration, $action) {
         if (!auth_logout()) {
             send_error(500, 'Internal Server Error', 'Unable to close the login session.');
         }
-        home_set_notice($url_base, $configuration, 'success', '已退出登录。');
+        home_set_notice($url_base, $configuration, 'success', t('notice.logged_out'));
         home_redirect($url_base);
     } else if ($action === 'create_token') {
         if ($session_user === NULL) {
@@ -251,50 +238,31 @@ function home_repository_url_conflicts($url_base, $definitions, $configuration, 
 function home_creation_result_notice($result) {
     $name = isset($result['name']) ? $result['name'] : '';
     switch ($result['status']) {
-        case 'invalid_name':
-            return array(422, 'error', '仓库名称格式无效。');
-        case 'already_exists':
-            return array(409, 'error', '仓库 '.$name.' 已存在。');
-        case 'create_busy':
-            return array(409, 'error', '另一个仓库正在创建，请稍后重试。');
-        case 'root_unavailable':
-            return array(503, 'error', '仓库存放目录不可用或不可写。');
-        case 'git_unavailable':
-            return array(503, 'error', 'Git 初始化服务当前不可用。');
-        case 'metadata_unavailable':
-            return array(503, 'error', '仓库所有权信息无法保存，请稍后重试。');
-        default:
-            return array(500, 'error', '仓库创建失败，请检查服务器日志。');
+        case 'invalid_name':        return array(422, 'error', t('notice.repository_invalid_name'));
+        case 'already_exists':      return array(409, 'error', t('notice.repository_exists', array('name' => $name)));
+        case 'create_busy':         return array(409, 'error', t('notice.repository_create_busy'));
+        case 'root_unavailable':    return array(503, 'error', t('notice.repository_root_unavailable'));
+        case 'git_unavailable':     return array(503, 'error', t('notice.repository_git_unavailable'));
+        case 'metadata_unavailable': return array(503, 'error', t('notice.repository_metadata_unsaved'));
+        default:                    return array(500, 'error', t('notice.repository_create_failed'));
     }
 }
 
 function home_deletion_result_notice($result) {
     $name = isset($result['name']) ? $result['name'] : '';
     switch ($result['status']) {
-        case 'deleted':
-            return array(303, 'success', '仓库 '.$name.' 已删除。');
-        case 'record_deleted':
-            return array(303, 'success', '仓库记录 '.$name.' 已删除，非 bare 路径未作改动。');
-        case 'invalid_repository':
-            return array(422, 'error', '仓库名称格式无效。');
-        case 'forbidden':
-            return array(403, 'error', '只有仓库所有者可以删除该仓库。');
-        case 'configured_repository':
-            return array(403, 'error', '该路径由 config.php 静态配置，不能从网页删除。');
-        case 'not_found':
-            return array(404, 'error', '托管仓库不存在或尚未创建完成。');
-        case 'repository_busy':
-            return array(409, 'error', '仓库正在执行其他操作，请稍后重试。');
-        case 'root_unavailable':
-            return array(503, 'error', '仓库存放目录不可用或不可写。');
-        case 'metadata_unavailable':
-            return array(503, 'error', '仓库所有权信息当前不可用。');
-        case 'cleanup_failed':
-            return array(500, 'error', '仓库记录已删除，但残留目录清理失败，请检查服务器日志。');
-        case 'restore_failed':
-            return array(500, 'error', '删除失败且仓库目录无法恢复，请立即检查服务器日志。');
-        default:
-            return array(500, 'error', '仓库删除失败，请检查服务器日志。');
+        case 'deleted':             return array(303, 'success', t('notice.repository_deleted', array('name' => $name)));
+        case 'record_deleted':      return array(303, 'success', t('notice.repository_record_deleted', array('name' => $name)));
+        case 'invalid_repository':  return array(422, 'error', t('notice.repository_invalid_name'));
+        case 'forbidden':           return array(403, 'error', t('notice.repository_delete_forbidden'));
+        case 'configured_repository': return array(403, 'error', t('notice.repository_configured_home'));
+        case 'not_found':           return array(404, 'error', t('notice.repository_not_found'));
+        case 'repository_busy':     return array(409, 'error', t('notice.repository_busy'));
+        case 'root_unavailable':    return array(503, 'error', t('notice.repository_root_unavailable'));
+        case 'metadata_unavailable': return array(503, 'error', t('notice.repository_metadata_unavailable'));
+        case 'cleanup_failed':      return array(500, 'error', t('notice.repository_cleanup_failed'));
+        case 'restore_failed':      return array(500, 'error', t('notice.repository_restore_failed'));
+        default:                    return array(500, 'error', t('notice.repository_delete_failed'));
     }
 }
 
@@ -338,7 +306,7 @@ function home_create_repository(
 
     if ($result['status'] === 'created') {
         home_set_notice(
-            $url_base, $configuration, 'success', '仓库 '.$result['name'].' 已创建。');
+            $url_base, $configuration, 'success', t('notice.repository_created', array('name' => $result['name'])));
         home_redirect($url_base);
     }
 
@@ -476,14 +444,16 @@ function home_clone_url_prefix() {
     return $scheme.'://'.$host;
 }
 
-function home_send_head() {
+function home_send_head($url_base='') {
+    $lang = home_escape(i18n_html_lang());
+    $title = home_escape(t('home.title'));
+    echo '<!DOCTYPE html>'."\n"
+        .'<html lang="'.$lang.'">'."\n"
+        .'<head>'."\n"
+        .'<meta charset="utf-8">'."\n"
+        .'<meta name="viewport" content="width=device-width, initial-scale=1">'."\n"
+        .'<title>'.$title.'</title>'."\n";
     echo <<<'HTML'
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PHP Git 服务器</title>
 <style>
 :root { color-scheme: light dark; }
 body { max-width: 62rem; margin: 0 auto; padding: 2.5rem 1.25rem; line-height: 1.6;
@@ -578,12 +548,15 @@ footer { margin-top: 2.5rem; color: #5b6472; font-size: .9rem; }
     .notice-success { background: #152b20; color: #95dab1; }
     .notice-error { background: #331c1c; color: #f0abab; }
 }
+.language-switcher { font-size: .85rem; }
+.language-switcher a { color: #075d8f; }
 </style>
 </head>
 <body>
-<h1>PHP Git 服务器</h1>
-<p class="lead">通过 HTTP 发布下列 Git 仓库，支持 clone、fetch、pull，并可按仓库启用 push。</p>
 HTML;
+    echo '<h1>'.home_escape(t('home.title')).'</h1>'."\n";
+    echo '<p class="lead">'.home_escape(t('home.lead')).'</p>'."\n";
+    echo i18n_language_switcher(home_page_url($url_base))."\n";
 }
 
 function home_send_authentication($url_base, $configuration, $notice) {
@@ -592,14 +565,14 @@ function home_send_authentication($url_base, $configuration, $notice) {
     }
 
     echo '<section class="account" aria-labelledby="account-title">' ."\n";
-    echo '<h2 id="account-title">账号与 Access Token</h2>' ."\n";
+    echo '<h2 id="account-title">'.home_escape(t('home.account_title')).'</h2>' ."\n";
     if ($notice !== NULL && isset($notice['token']) && is_string($notice['token'])) {
         echo '<pre class="token-result"><code>'.home_escape($notice['token']).'</code></pre>' ."\n";
     }
 
     $csrf_token = home_csrf_token($url_base, $configuration);
     if ($csrf_token === FALSE) {
-        echo '<p class="notice notice-error" role="status">当前无法初始化安全表单。</p>' ."\n";
+        echo '<p class="notice notice-error" role="status">'.home_escape(t('home.form_unavailable')).'</p>' ."\n";
         echo '</section>' ."\n";
         return;
     }
@@ -612,56 +585,62 @@ function home_send_authentication($url_base, $configuration, $notice) {
         echo '<div class="account-grid">' ."\n";
         echo '<form method="post" action="'.$action.'">' ."\n".$csrf_field;
         echo '<input type="hidden" name="action" value="login">' ."\n";
-        echo '<div class="credentials"><div><label for="login-username">用户名</label>' ."\n";
+        echo '<div class="credentials"><div><label for="login-username">'.home_escape(t('home.username')).'</label>' ."\n";
         echo '<input id="login-username" name="username" maxlength="64" autocomplete="username" required></div>' ."\n";
-        echo '<div><label for="login-password">密码</label>' ."\n";
+        echo '<div><label for="login-password">'.home_escape(t('home.password')).'</label>' ."\n";
         echo '<input id="login-password" name="password" type="password" minlength="8" maxlength="72" autocomplete="current-password" required></div></div>' ."\n";
-        echo '<button type="submit">登录</button></form>' ."\n";
+        echo '<button type="submit">'.home_escape(t('home.login')).'</button></form>' ."\n";
 
         if (auth_registration_is_enabled()) {
             echo '<form method="post" action="'.$action.'">' ."\n".$csrf_field;
             echo '<input type="hidden" name="action" value="register">' ."\n";
-            echo '<div class="credentials"><div><label for="register-username">注册用户名</label>' ."\n";
+            echo '<div class="credentials"><div><label for="register-username">'.home_escape(t('home.register_username')).'</label>' ."\n";
             echo '<input id="register-username" name="username" minlength="3" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9_-]" autocomplete="username" required></div>' ."\n";
-            echo '<div><label for="register-password">密码</label>' ."\n";
+            echo '<div><label for="register-password">'.home_escape(t('home.password')).'</label>' ."\n";
             echo '<input id="register-password" name="password" type="password" minlength="8" maxlength="72" autocomplete="new-password" required></div>' ."\n";
-            echo '<div><label for="register-password-confirmation">确认密码</label>' ."\n";
+            echo '<div><label for="register-password-confirmation">'.home_escape(t('home.password_confirmation')).'</label>' ."\n";
             echo '<input id="register-password-confirmation" name="password_confirmation" type="password" minlength="8" maxlength="72" autocomplete="new-password" required></div></div>' ."\n";
-            echo '<button type="submit">注册</button></form>' ."\n";
+            echo '<button type="submit">'.home_escape(t('home.register')).'</button></form>' ."\n";
         }
         echo '</div>' ."\n";
-        echo '<p class="hint">网页登录使用密码；Git clone、pull 和 push 使用用户名与 access token。</p>' ."\n";
+        echo '<p class="hint">'.home_escape(t('home.auth_hint')).'</p>' ."\n";
         echo '</section>' ."\n";
         return;
     }
 
-    echo '<div class="account-bar"><p>当前账号：<strong>'.home_escape($user['username']).'</strong></p>' ."\n";
+    echo '<div class="account-bar"><p>'.home_escape(t('home.current_account')).'：<strong>'
+        .home_escape($user['username']).'</strong></p>' ."\n";
     echo '<div class="account-actions">';
     if (auth_user_is_administrator($user)) {
-        echo '<a href="'.home_escape(rtrim((string) $url_base, '/').'/manage.php').'">管理</a>';
+        echo '<a href="'.home_escape(rtrim((string) $url_base, '/').'/manage.php').'">'
+            .home_escape(t('home.manage')).'</a>';
     }
     echo '<form method="post" action="'.$action.'">'.$csrf_field;
     echo '<input type="hidden" name="action" value="logout">' ."\n";
-    echo '<button class="button-danger" type="submit">退出</button></form></div></div>' ."\n";
+    echo '<button class="button-danger" type="submit">'.home_escape(t('home.logout')).'</button></form></div></div>' ."\n";
     echo '<form class="token-form" method="post" action="'.$action.'">'.$csrf_field;
     echo '<input type="hidden" name="action" value="create_token">' ."\n";
-    echo '<div class="field"><label for="token-name">新 Token 名称</label>' ."\n";
-    echo '<input id="token-name" name="token_name" maxlength="80" placeholder="工作电脑" required></div>' ."\n";
-    echo '<button type="submit">创建 Token</button></form>' ."\n";
+    echo '<div class="field"><label for="token-name">'.home_escape(t('home.token_name')).'</label>' ."\n";
+    echo '<input id="token-name" name="token_name" maxlength="80" placeholder="'
+        .home_escape(t('home.token_name_placeholder')).'" required></div>' ."\n";
+    echo '<button type="submit">'.home_escape(t('home.create_token')).'</button></form>' ."\n";
 
     $tokens = auth_list_access_tokens($user['id']);
     if ($tokens === FALSE) {
-        echo '<p class="notice notice-error">当前无法读取 access token 列表。</p>' ."\n";
+        echo '<p class="notice notice-error">'.home_escape(t('home.token_list_unavailable')).'</p>' ."\n";
     } else if (!empty($tokens)) {
         echo '<ul class="token-list">' ."\n";
         foreach ($tokens as $token) {
-            $last_used = $token['last_used_at'] === NULL ? '从未使用' : '最后使用 '.$token['last_used_at'];
+            $last_used = $token['last_used_at'] === NULL
+                ? t('home.token_never_used')
+                : t('home.token_last_used', array('time' => $token['last_used_at']));
+            $created = t('home.token_created_at', array('time' => $token['created_at']));
             echo '<li><span><strong>'.home_escape($token['name']).'</strong><br>';
-            echo '<span class="hint">创建于 '.home_escape($token['created_at']).'；'.home_escape($last_used).'</span></span>' ."\n";
+            echo '<span class="hint">'.home_escape($created).' · '.home_escape($last_used).'</span></span>' ."\n";
             echo '<form method="post" action="'.$action.'">'.$csrf_field;
             echo '<input type="hidden" name="action" value="revoke_token">' ."\n";
             echo '<input type="hidden" name="token_id" value="'.home_escape($token['id']).'">' ."\n";
-            echo '<button class="button-danger" type="submit">撤销</button></form></li>' ."\n";
+            echo '<button class="button-danger" type="submit">'.home_escape(t('home.revoke')).'</button></form></li>' ."\n";
         }
         echo '</ul>' ."\n";
     }
@@ -674,21 +653,21 @@ function home_send_creation($url_base, $configuration, $notice, $value, $visibil
     }
 
     echo '<section class="create" aria-labelledby="create-title">' ."\n";
-    echo '<h2 id="create-title">创建仓库</h2>' ."\n";
+    echo '<h2 id="create-title">'.home_escape(t('home.create_repository')).'</h2>' ."\n";
     if ($notice !== NULL) {
         echo '<p class="notice notice-'.home_escape($notice['type']).'" role="status">'
             .home_escape($notice['message']).'</p>' ."\n";
     }
 
     if (!home_creation_is_authorized($configuration)) {
-        echo '<p class="lead">需要先登录应用账号，才能创建仓库。</p>' ."\n";
+        echo '<p class="lead">'.home_escape(t('home.create_login_required')).'</p>' ."\n";
         echo '</section>' ."\n";
         return;
     }
 
     $token = home_csrf_token($url_base, $configuration);
     if ($token === FALSE) {
-        echo '<p class="notice notice-error" role="status">当前无法初始化安全表单。</p>' ."\n";
+        echo '<p class="notice notice-error" role="status">'.home_escape(t('home.form_unavailable')).'</p>' ."\n";
         echo '</section>' ."\n";
         return;
     }
@@ -696,19 +675,19 @@ function home_send_creation($url_base, $configuration, $notice, $value, $visibil
     echo '<form method="post" action="'.home_escape(home_page_url($url_base)).'">' ."\n";
     echo '<input type="hidden" name="csrf_token" value="'.home_escape($token).'">' ."\n";
     echo '<input type="hidden" name="action" value="create_repository">' ."\n";
-    echo '<div class="field"><label for="repository-name">仓库名称</label>' ."\n";
+    echo '<div class="field"><label for="repository-name">'.home_escape(t('home.repository_name')).'</label>' ."\n";
     echo '<input id="repository-name" name="repository_name" type="text" maxlength="68" '
         .'pattern="[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9_-])?(?:\.git)?" '
         .'placeholder="project" value="'
         .home_escape($value).'" autocomplete="off" required>' ."\n";
-    echo '<p class="hint">可使用字母、数字、点、短横线和下划线；<code>.git</code> 后缀可省略。</p></div>' ."\n";
-    echo '<fieldset class="visibility"><legend>可见性</legend><div class="visibility-options">' ."\n";
+    echo '<p class="hint">'.t('home.repository_name_hint').'</p></div>' ."\n";
+    echo '<fieldset class="visibility"><legend>'.home_escape(t('home.visibility')).'</legend><div class="visibility-options">' ."\n";
     echo '<label class="visibility-option"><input name="visibility" type="radio" value="public"'
-        .($visibility !== 'private' ? ' checked' : '').'><span>公开</span></label>' ."\n";
+        .($visibility !== 'private' ? ' checked' : '').'><span>'.home_escape(t('home.public')).'</span></label>' ."\n";
     echo '<label class="visibility-option"><input name="visibility" type="radio" value="private"'
-        .($visibility === 'private' ? ' checked' : '').'><span>私有</span></label>' ."\n";
+        .($visibility === 'private' ? ' checked' : '').'><span>'.home_escape(t('home.private')).'</span></label>' ."\n";
     echo '</div></fieldset>' ."\n";
-    echo '<button type="submit">创建仓库</button>' ."\n";
+    echo '<button type="submit">'.home_escape(t('home.create_repository')).'</button>' ."\n";
     echo '</form>' ."\n";
     echo '</section>' ."\n";
 }
@@ -723,10 +702,14 @@ function home_send_repository_table(
     $csrf_token = $user === NULL ? FALSE : home_csrf_token($url_base, $configuration);
     echo '<table>'."\n";
     echo '<caption>'.home_escape($caption).'</caption>'."\n";
-    echo '<thead><tr><th scope="col">仓库</th><th scope="col">所有者</th><th scope="col">克隆地址</th>'
-        .'<th scope="col">默认分支</th><th scope="col" class="count">分支</th>'
-        .'<th scope="col" class="count">标签</th><th scope="col">权限</th>'
-        .'<th scope="col">操作</th></tr></thead>' ."\n";
+    echo '<thead><tr><th scope="col">'.home_escape(t('home.th_repository')).'</th>'
+        .'<th scope="col">'.home_escape(t('home.th_owner')).'</th>'
+        .'<th scope="col">'.home_escape(t('home.th_clone_url')).'</th>'
+        .'<th scope="col">'.home_escape(t('home.th_default_branch')).'</th>'
+        .'<th scope="col" class="count">'.home_escape(t('home.th_branches')).'</th>'
+        .'<th scope="col" class="count">'.home_escape(t('home.th_tags')).'</th>'
+        .'<th scope="col">'.home_escape(t('home.th_access')).'</th>'
+        .'<th scope="col">'.home_escape(t('home.th_actions')).'</th></tr></thead>' ."\n";
     echo '<tbody>'."\n";
 
     foreach ($repositories as $repository) {
@@ -734,16 +717,16 @@ function home_send_repository_table(
         if ($summary['head'] !== NULL) {
             $head = '<code>'.home_escape($summary['head']).'</code>';
         } else if ($summary['branches'] === 0) {
-            $head = '<span class="badge badge-quiet">空仓库</span>';
+            $head = '<span class="badge badge-quiet">'.home_escape(t('home.badge_empty')).'</span>';
         } else {
-            $head = '<span class="badge badge-quiet">未指向分支</span>';
+            $head = '<span class="badge badge-quiet">'.home_escape(t('home.badge_no_branch')).'</span>';
         }
         $owner = $repository['options']['owner'] === NULL
-            ? '<span class="badge badge-quiet">未设置</span>'
+            ? '<span class="badge badge-quiet">'.home_escape(t('home.badge_unset')).'</span>'
             : '<code>'.home_escape($repository['options']['owner']).'</code>';
         $access = $repository['options']['push'] && $repository['options']['owner'] !== NULL
-            ? '<span class="badge badge-push">所有者可推送</span>'
-            : '<span class="badge badge-quiet">只读</span>';
+            ? '<span class="badge badge-push">'.home_escape(t('home.badge_owner_push')).'</span>'
+            : '<span class="badge badge-quiet">'.home_escape(t('home.badge_read_only')).'</span>';
 
         echo '<tr>';
         echo '<td>'.home_escape(basename($repository['url'])).'</td>';
@@ -763,10 +746,10 @@ function home_send_repository_table(
             echo '<input type="hidden" name="repository_name" value="'
                 .home_escape(basename($repository['url'])).'">' ."\n";
             echo '<label class="confirm-delete"><input name="confirmation" type="checkbox" '
-                .'value="delete" required> 确认删除</label>' ."\n";
-            echo '<button class="button-danger" type="submit">删除</button></form>';
+                .'value="delete" required> '.home_escape(t('home.confirm_delete')).'</label>' ."\n";
+            echo '<button class="button-danger" type="submit">'.home_escape(t('home.delete')).'</button></form>';
         } else {
-            echo '<span class="badge badge-quiet">无</span>';
+            echo '<span class="badge badge-quiet">'.home_escape(t('home.badge_none')).'</span>';
         }
         echo '</td>';
         echo '</tr>'."\n";
@@ -799,13 +782,10 @@ function home_send_repository_section(
 }
 
 function home_send_empty_notice() {
-    echo <<<'HTML'
-<div class="empty">
-<p>当前没有可读取的仓库。</p>
-<p>请复制 <code>config.php.sample</code> 为 <code>config.php</code>，在 <code>$repos</code>
-中配置仓库路径，并确认仓库目录存在且 <code>read</code> 选项为 <code>TRUE</code>。</p>
-</div>
-HTML;
+    echo '<div class="empty">'."\n";
+    echo '<p>'.home_escape(t('home.empty_title')).'</p>'."\n";
+    echo '<p>'.t('home.empty_body').'</p>'."\n";
+    echo '</div>'."\n";
 }
 
 function home_send_usage($repositories, $prefix) {
@@ -813,12 +793,11 @@ function home_send_usage($repositories, $prefix) {
         ? $prefix.'/project.git'
         : $prefix.$repositories[0]['url'];
 
-    echo '<h2>使用方法</h2>'."\n";
+    echo '<h2>'.home_escape(t('home.usage_title')).'</h2>'."\n";
     echo '<pre><code>git clone '.home_escape($example)."\n"
         .'git pull'."\n"
         .'git push origin main</code></pre>'."\n";
-    echo '<p class="lead">push 需要仓库启用 <code>push</code> 选项；启用认证时还需要'
-        .'使用账号用户名和 access token。</p>'."\n";
+    echo '<p class="lead">'.t('home.usage_hint').'</p>'."\n";
 }
 
 function home_render(
@@ -837,7 +816,7 @@ function home_render(
     header('X-Content-Type-Options: nosniff');
     header('Content-Security-Policy: default-src \'none\'; style-src \'unsafe-inline\'');
 
-    home_send_head();
+    home_send_head($url_base);
     if ($notice !== NULL) {
         echo '<p class="notice notice-'.home_escape($notice['type']).'" role="status">'
             .home_escape($notice['message']).'</p>' ."\n";
@@ -847,26 +826,26 @@ function home_render(
 
     home_send_repository_section(
         'public-repositories',
-        '公开仓库',
+        t('home.public_repositories'),
         $repositories['public'],
         $prefix,
-        '当前没有公开仓库。',
+        t('home.no_public_repositories'),
         $url_base,
         $configuration);
     if ($show_private) {
         home_send_repository_section(
             'private-repositories',
-            '私有仓库',
+            t('home.private_repositories'),
             $repositories['private'],
             $prefix,
-            '当前没有私有仓库。',
+            t('home.no_private_repositories'),
             $url_base,
             $configuration);
     }
 
     home_send_usage(array_merge($repositories['public'], $repositories['private']), $prefix);
 
-    echo '<footer>详细安装、配置和安全说明见 <code>usage.md</code>。</footer>'."\n";
+    echo '<footer>'.t('home.footer').'</footer>'."\n";
     echo '</body>'."\n".'</html>'."\n";
 }
 
@@ -914,6 +893,7 @@ if (!isset($auth)) {
 if (!is_array($auth)) {
     send_error(500, 'Internal Server Error', 'The authentication configuration is invalid.');
 }
+i18n_configure(isset($language) ? $language : NULL, $url_base);
 auth_configure($auth, $url_base);
 
 if (!isset($managed_repositories)) {

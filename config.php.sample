@@ -11,6 +11,9 @@ $url_base = '';
 
 $git_executable = 'git';
 
+/* Interface language: 'en', 'zh', or empty to follow the browser. */
+$language = '';
+
 /*
  * Application accounts and access tokens. Import schema.mysql.sql before
  * enabling this section. Use a dedicated MySQL user with SELECT, INSERT,

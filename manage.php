@@ -7,6 +7,7 @@ if (!file_exists(__DIR__.'/config.php')) {
 
 require(__DIR__.'/config.php');
 require(__DIR__.'/lib/http.php');
+require(__DIR__.'/lib/i18n.php');
 require(__DIR__.'/lib/auth.php');
 require(__DIR__.'/lib/repository.php');
 
@@ -89,69 +90,36 @@ function manage_redirect($url_base) {
 function manage_result_notice($result) {
     $name = isset($result['name']) ? $result['name'] : '';
     switch ($result['status']) {
-        case 'user_created':
-            return array('success', '用户 '.$result['username'].' 已创建。');
-        case 'user_updated':
-            return array('success', '用户状态已更新。');
-        case 'tokens_revoked':
-            return array('success', '已撤销 '.$result['count'].' 个有效 Access Token。');
-        case 'password_updated':
-            return array('success', '用户密码已重置。');
-        case 'user_deleted':
-            return array('success', '用户已删除。');
-        case 'repository_updated':
-            return array('success', '仓库所有者与可见性已更新。');
-        case 'deleted':
-            return array('success', '托管仓库 '.$name.' 已删除。');
-        case 'record_deleted':
-            return array(
-                'success',
-                '仓库记录 '.$name.' 已删除；缺失或非 bare 路径未作改动。');
-        case 'invalid_username':
-            return array('error', '用户名须为 3 至 64 个字母、数字、点、短横线或下划线。');
-        case 'invalid_password':
-            return array('error', '密码长度须为 8 至 72 个字符，且不能超过 72 字节。');
-        case 'password_mismatch':
-            return array('error', '两次输入的密码不一致。');
-        case 'username_exists':
-            return array('error', '该用户名已存在。');
-        case 'invalid_user':
-            return array('error', '用户不存在或参数无效。');
-        case 'invalid_owner':
-            return array('error', '新的仓库所有者不存在或不可用。');
-        case 'invalid_repository':
-            return array('error', '仓库不存在或参数无效。');
-        case 'administrator_protected':
-            return array('error', '配置中的管理员账号不能被停用或删除。');
-        case 'self_protected':
-            return array('error', '不能停用或删除当前登录账号。');
-        case 'user_owns_repositories':
-            return array('error', '该用户仍拥有仓库；请先转移或删除这些仓库。');
-        case 'configured_owner':
-            return array(
-                'error',
-                '该用户是 config.php 静态仓库的所有者；请先在配置中更换所有者。');
-        case 'configured_repository':
-            return array('error', '该路径由 config.php 静态配置，不能从管理界面删除。');
-        case 'confirmation_required':
-            return array('error', '操作确认值无效，请重新确认。');
-        case 'forbidden':
-            return array('error', '仓库权限已变化，操作被拒绝。');
-        case 'not_found':
-            return array('error', '托管仓库目录或记录不存在。');
-        case 'repository_busy':
-            return array('error', '仓库正在执行其他操作，请稍后重试。');
-        case 'root_unavailable':
-            return array('error', '仓库存放目录不可用或不可写。');
-        case 'cleanup_failed':
-            return array('error', '仓库记录已删除，但残留目录清理失败，请检查服务器日志。');
-        case 'restore_failed':
-            return array('error', '删除失败且仓库目录无法恢复，请立即检查服务器日志。');
+        case 'user_created': return array('success', t('manage.user_created', array('username' => $result['username'])));
+        case 'user_updated': return array('success', t('manage.user_updated'));
+        case 'tokens_revoked': return array('success', t('manage.tokens_revoked', array('count' => $result['count'])));
+        case 'password_updated': return array('success', t('manage.password_updated'));
+        case 'user_deleted': return array('success', t('manage.user_deleted'));
+        case 'repository_updated': return array('success', t('manage.repository_updated'));
+        case 'deleted': return array('success', t('manage.repository_deleted', array('name' => $name)));
+        case 'record_deleted': return array('success', t('manage.repository_record_deleted', array('name' => $name)));
+        case 'invalid_username': return array('error', t('notice.invalid_username'));
+        case 'invalid_password': return array('error', t('notice.invalid_password'));
+        case 'password_mismatch': return array('error', t('notice.password_mismatch'));
+        case 'username_exists': return array('error', t('manage.username_exists'));
+        case 'invalid_user': return array('error', t('manage.invalid_user'));
+        case 'invalid_owner': return array('error', t('manage.invalid_owner'));
+        case 'invalid_repository': return array('error', t('manage.invalid_repository'));
+        case 'administrator_protected': return array('error', t('manage.administrator_protected'));
+        case 'self_protected': return array('error', t('manage.self_protected'));
+        case 'user_owns_repositories': return array('error', t('manage.user_owns_repositories'));
+        case 'configured_owner': return array('error', t('manage.configured_owner'));
+        case 'configured_repository': return array('error', t('manage.configured_repository'));
+        case 'confirmation_required': return array('error', t('manage.confirmation_required'));
+        case 'forbidden': return array('error', t('manage.forbidden'));
+        case 'not_found': return array('error', t('manage.not_found'));
+        case 'repository_busy': return array('error', t('manage.repository_busy'));
+        case 'root_unavailable': return array('error', t('manage.root_unavailable'));
+        case 'cleanup_failed': return array('error', t('manage.cleanup_failed'));
+        case 'restore_failed': return array('error', t('manage.restore_failed'));
         case 'metadata_unavailable':
-        case 'database_unavailable':
-            return array('error', '管理数据库当前不可用。');
-        default:
-            return array('error', '操作失败，请检查服务器日志。');
+        case 'database_unavailable': return array('error', t('manage.database_unavailable'));
+        default: return array('error', t('manage.action_failed'));
     }
 }
 
@@ -265,11 +233,11 @@ function manage_handle_action($url_base, $definitions, $configuration, $administ
 function manage_send_head($url_base, $administrator) {
     echo <<<'HTML'
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="__LANG__">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>服务器管理 - PHP Git 服务器</title>
+<title>__TITLE__</title>
 <style>
 :root { color-scheme: light dark; --ink: #20252b; --muted: #65707d; --line: #d7dce2;
     --surface: #f5f7f8; --accent: #176b43; --danger: #a43a3a; --warning: #8a6116; }
@@ -351,7 +319,8 @@ HTML;
     echo '<header><div class="header-inner"><div><h1>PHP Git 服务器 / 管理</h1>' ."\n";
     echo '<p class="identity">管理员：<strong>'.manage_escape($administrator['username'])
         .'</strong></p></div>' ."\n";
-    echo '<nav><a href="'.manage_escape(manage_home_url($url_base)).'">返回仓库首页</a>';
+    echo '<nav><a href="'.manage_escape(manage_home_url($url_base)).'">返回仓库首页</a> '
+        .i18n_language_switcher(manage_page_url($url_base));
     echo '</nav></div></header>' ."\n";
 }
 
@@ -580,6 +549,7 @@ function manage_render(
     header('Content-Security-Policy: default-src \'none\'; style-src \'unsafe-inline\'; '
         .'form-action \'self\'; base-uri \'none\'; frame-ancestors \'none\'');
 
+    ob_start();
     manage_send_head($url_base, $administrator);
     echo '<main>' ."\n";
     if ($notice !== NULL && isset($notice['type'], $notice['message'])) {
@@ -597,6 +567,10 @@ function manage_render(
         $definitions);
     manage_send_configured_repositories($url_base, $definitions);
     echo '</main></body></html>' ."\n";
+    $markup = ob_get_clean();
+    $markup = str_replace('__LANG__', manage_escape(i18n_html_lang()), $markup);
+    $markup = str_replace('__TITLE__', manage_escape(t('manage.title')), $markup);
+    echo i18n_translate_markup($markup);
 }
 
 if (!isset($url_base)) {
@@ -615,6 +589,7 @@ if (!is_array($managed_repositories)) {
     send_error(500, 'Internal Server Error', 'The managed repository configuration is invalid.');
 }
 
+i18n_configure(isset($language) ? $language : NULL, $url_base);
 auth_configure($auth, $url_base);
 if (!auth_is_enabled()) {
     send_error(404, 'Not Found', 'Account authentication is disabled.');
