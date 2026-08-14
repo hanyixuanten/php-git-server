@@ -359,25 +359,45 @@ function git_object_store_apply_delta($base, $delta, $max_result_bytes=0) {
 function git_object_store_links($object) {
     $links = array();
     if ($object['type'] === 'commit') {
-        foreach (preg_split('~\n~', $object['body']) as $line) {
-            if ($line === '') {
-                break;
-            }
-            if (preg_match('~^(?:tree|parent) ([0-9a-f]{40})$~D', $line, $matches)) {
+        $headers = strstr($object['body'], "\n\n", TRUE);
+        if ($headers === FALSE) {
+            return FALSE;
+        }
+        $lines = explode("\n", $headers);
+        if (empty($lines) || !preg_match('~^tree ([0-9a-f]{40})$~D', $lines[0], $matches)) {
+            return FALSE;
+        }
+        $links[] = $matches[1];
+        foreach (array_slice($lines, 1) as $line) {
+            if (strpos($line, 'parent ') === 0) {
+                if (!preg_match('~^parent ([0-9a-f]{40})$~D', $line, $matches)) {
+                    return FALSE;
+                }
                 $links[] = $matches[1];
             }
         }
     } else if ($object['type'] === 'tag') {
-        if (preg_match('~^object ([0-9a-f]{40})$~m', $object['body'], $matches)) {
-            $links[] = $matches[1];
+        $headers = strstr($object['body'], "\n\n", TRUE);
+        if ($headers === FALSE) {
+            return FALSE;
         }
+        $lines = explode("\n", $headers);
+        if (count($lines) < 3
+            || !preg_match('~^object ([0-9a-f]{40})$~D', $lines[0], $object_match)
+            || !preg_match('~^type (commit|tree|blob|tag)$~D', $lines[1])
+            || !preg_match('~^tag .+$~D', $lines[2])) {
+            return FALSE;
+        }
+        $links[] = $object_match[1];
     } else if ($object['type'] === 'tree') {
         $position = 0;
         $length = strlen($object['body']);
         while ($position < $length) {
             $separator = strpos($object['body'], "\0", $position);
             if ($separator === FALSE || $separator + 21 > $length
-                || !preg_match('~^[0-7]+ [^/]+$~D', substr($object['body'], $position, $separator - $position))) {
+                || !preg_match(
+                    '~^(?:40000|100644|100755|120000|160000) [^/\x00]+$~D',
+                    substr($object['body'], $position, $separator - $position))) {
                 return FALSE;
             }
             $links[] = bin2hex(substr($object['body'], $separator + 1, 20));
@@ -386,6 +406,35 @@ function git_object_store_links($object) {
     }
 
     return $links;
+}
+
+function git_object_store_validate_links(&$store, $object, $links) {
+    if ($object['type'] === 'commit') {
+        foreach ($links as $index => $oid) {
+            $linked = git_object_store_read($store, $oid);
+            if ($linked === FALSE
+                || ($index === 0 && $linked['type'] !== 'tree')
+                || ($index > 0 && $linked['type'] !== 'commit')) {
+                return FALSE;
+            }
+        }
+    } else if ($object['type'] === 'tag') {
+        if (!preg_match('~^type (commit|tree|blob|tag)$~m', $object['body'], $matches)) {
+            return FALSE;
+        }
+        $linked = git_object_store_read($store, $links[0]);
+        if ($linked === FALSE || $linked['type'] !== $matches[1]) {
+            return FALSE;
+        }
+    } else if ($object['type'] === 'tree') {
+        foreach ($links as $oid) {
+            if (git_object_store_read($store, $oid) === FALSE) {
+                return FALSE;
+            }
+        }
+    }
+
+    return TRUE;
 }
 
 function git_object_store_collect(&$store, $roots) {
@@ -401,7 +450,7 @@ function git_object_store_collect(&$store, $roots) {
             return FALSE;
         }
         $links = git_object_store_links($object);
-        if ($links === FALSE) {
+        if ($links === FALSE || !git_object_store_validate_links($store, $object, $links)) {
             return FALSE;
         }
         $objects[$oid] = $object;

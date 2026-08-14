@@ -438,6 +438,9 @@ function git_receive_pack_commit_updates($git_path, $locks) {
     foreach ($locks as $lock) {
         $updates[] = $lock['update'];
     }
+    $packed_path = get_safe_file_path($git_path, '/packed-refs');
+    $packed_contents = $packed_path === FALSE ? NULL : @file_get_contents($packed_path);
+    $committed = array();
     if (!git_receive_pack_remove_packed_refs($git_path, $updates)) {
         return FALSE;
     }
@@ -447,17 +450,37 @@ function git_receive_pack_commit_updates($git_path, $locks) {
         $lock['file'] = NULL;
         if ($lock['update']['new'] === str_repeat('0', 40)) {
             if (is_file($lock['path']) && !@unlink($lock['path'])) {
-                git_receive_pack_release_locks($locks);
-                return FALSE;
+                break;
             }
             @unlink($lock['lock_path']);
         } else if (!@rename($lock['lock_path'], $lock['path'])) {
-            git_receive_pack_release_locks($locks);
-            return FALSE;
+            break;
         }
+        $committed[] = $lock['update'];
     }
     unset($lock);
-    return TRUE;
+    if (count($committed) === count($locks)) {
+        return TRUE;
+    }
+
+    git_receive_pack_release_locks($locks);
+    foreach ($committed as $update) {
+        $path = $git_path.'/'.$update['ref'];
+        if ($update['old'] === str_repeat('0', 40)) {
+            @unlink($path);
+            continue;
+        }
+        if (!is_dir(dirname($path))) {
+            @mkdir(dirname($path), 0777, TRUE);
+        }
+        @file_put_contents($path, $update['old']."\n", LOCK_EX);
+    }
+    if ($packed_contents !== NULL) {
+        @file_put_contents($git_path.'/packed-refs', $packed_contents, LOCK_EX);
+    } else {
+        @unlink($git_path.'/packed-refs');
+    }
+    return FALSE;
 }
 
 function git_receive_pack_status($capabilities, $updates, $unpack_ok, $message) {
@@ -526,7 +549,7 @@ function git_receive_pack_rpc_native($repository, $input) {
     $objects = array();
     if ($store === FALSE) {
         git_receive_pack_status($commands['capabilities'], $commands['updates'], FALSE, 'unsupported repository format');
-        return TRUE;
+        return FALSE;
     }
     if ($needs_pack) {
         $pack = stream_get_contents($input);
@@ -537,7 +560,7 @@ function git_receive_pack_rpc_native($repository, $input) {
             (int) $repository['options']['max_pack_objects']);
         if ($objects === FALSE) {
             git_receive_pack_status($commands['capabilities'], $commands['updates'], FALSE, 'invalid pack');
-            return TRUE;
+            return FALSE;
         }
     }
 
@@ -550,27 +573,27 @@ function git_receive_pack_rpc_native($repository, $input) {
             || (strpos($update['ref'], 'refs/heads/') === 0
                 && $store['objects'][$update['new']]['type'] !== 'commit')) {
             git_receive_pack_status($commands['capabilities'], $commands['updates'], FALSE, 'invalid object graph');
-            return TRUE;
+            return FALSE;
         }
         if (strpos($update['ref'], 'refs/heads/') === 0
             && $update['old'] !== $zero
             && !$repository['options']['allow_non_fast_forward']
             && !git_receive_pack_is_ancestor($store, $update['old'], $update['new'])) {
             git_receive_pack_status($commands['capabilities'], $commands['updates'], FALSE, 'non-fast-forward');
-            return TRUE;
+            return FALSE;
         }
     }
 
     $locks = git_receive_pack_lock_updates($repository['path'], $commands['updates']);
     if ($locks === FALSE) {
         git_receive_pack_status($commands['capabilities'], $commands['updates'], FALSE, 'stale or locked ref');
-        return TRUE;
+        return FALSE;
     }
     if (!git_receive_pack_write_objects($repository['path'], $objects)
         || !git_receive_pack_commit_updates($repository['path'], $locks)) {
         git_receive_pack_release_locks($locks);
         git_receive_pack_status($commands['capabilities'], $commands['updates'], FALSE, 'repository update failed');
-        return TRUE;
+        return FALSE;
     }
 
     git_receive_pack_status($commands['capabilities'], $commands['updates'], TRUE, '');

@@ -1,49 +1,35 @@
 <?php
 
-require_once dirname(__DIR__).'/lib/repository.php';
-require_once dirname(__DIR__).'/lib/git_service.php';
+require_once __DIR__.'/bootstrap.php';
+require_once __DIR__.'/git_fixture.php';
 
-function test_remove_directory($path) {
-    if (!is_dir($path)) {
-        return;
+test_case('unborn HEAD follows the first pushed branch', function () {
+    $fixture = git_fixture_create();
+    try {
+        $oid = git_fixture_history($fixture, array('one'))[0];
+        git_fixture_write_ref($fixture, 'refs/heads/master', $oid);
+        test_assert_true(git_service_update_unborn_head(
+            $fixture, array('refs/heads/master')));
+        test_assert_same(
+            "ref: refs/heads/master\n",
+            file_get_contents($fixture.'/HEAD'));
+    } finally {
+        test_remove_directory($fixture);
     }
-    foreach (scandir($path) as $entry) {
-        if ($entry === '.' || $entry === '..') {
-            continue;
-        }
-        $entry_path = $path.'/'.$entry;
-        if (is_dir($entry_path)) {
-            test_remove_directory($entry_path);
-        } else {
-            unlink($entry_path);
-        }
+});
+
+test_case('an established HEAD remains unchanged', function () {
+    $fixture = git_fixture_create();
+    try {
+        $history = git_fixture_history($fixture, array('main', 'master'));
+        git_fixture_write_ref($fixture, 'refs/heads/main', $history[0]);
+        git_fixture_write_ref($fixture, 'refs/heads/master', $history[1]);
+        test_assert_true(git_service_update_unborn_head(
+            $fixture, array('refs/heads/master')));
+        test_assert_same(
+            "ref: refs/heads/main\n",
+            file_get_contents($fixture.'/HEAD'));
+    } finally {
+        test_remove_directory($fixture);
     }
-    rmdir($path);
-}
-
-$path = sys_get_temp_dir().'/php-git-server-head-'.bin2hex(random_bytes(8)).'.git';
-mkdir($path.'/refs/heads', 0777, TRUE);
-mkdir($path.'/objects', 0777, TRUE);
-file_put_contents($path.'/HEAD', "ref: refs/heads/main\n");
-file_put_contents($path.'/refs/heads/master', str_repeat('1', 40)."\n");
-
-try {
-    git_service_update_unborn_head($path, array('refs/heads/master'));
-    $head = file_get_contents($path.'/HEAD');
-    if ($head !== "ref: refs/heads/master\n") {
-        fwrite(STDERR, 'Expected HEAD to follow the first pushed branch, got: '.$head);
-        exit(1);
-    }
-
-    file_put_contents($path.'/refs/heads/main', str_repeat('2', 40)."\n");
-    git_service_update_unborn_head($path, array('refs/heads/master'));
-    $head = file_get_contents($path.'/HEAD');
-    if ($head !== "ref: refs/heads/master\n") {
-        fwrite(STDERR, "Expected an existing HEAD target to remain unchanged.\n");
-        exit(1);
-    }
-} finally {
-    test_remove_directory($path);
-}
-
-fwrite(STDOUT, "unborn HEAD regression test passed\n");
+});

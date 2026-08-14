@@ -12,18 +12,23 @@ This is a PHP Smart HTTP Git server with no dependency manager or generated buil
 - `schema.mysql.sql` and `migration.repository-ownership.mysql.sql` define database changes.
 - `config.php.sample` documents settings; local `config.php` must never be committed.
 - `repos/` contains runtime bare repositories. `README.md` and `usage.md` document deployment.
-
-There is no dedicated automated test directory.
+- `tests/` contains the dependency-free protocol regression suite and disposable repository fixtures.
 
 ## Build, Test, and Development Commands
 
-PHP is interpreted directly, so there is no build step. Run syntax checks from the repository root:
+PHP is interpreted directly, so there is no build step. Run the complete regression suite from the repository root:
+
+```sh
+php tests/run.php
+```
+
+Run syntax checks across production and test code:
 
 ```sh
 php -l index.php
 php -l install.php
 php -l manage.php
-for file in lib/*.php operations/*.php; do php -l "$file" || exit 1; done
+for file in lib/*.php operations/*.php tests/*.php; do php -l "$file" || exit 1; done
 ```
 
 Check required runtime support with `php -m | grep pdo_mysql`. For a local smoke test, use a disposable `config.php` and PHP-capable web server, then exercise the UI and Git endpoints with `git ls-remote` or `git clone`.

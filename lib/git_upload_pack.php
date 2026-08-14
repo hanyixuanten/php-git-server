@@ -2,8 +2,12 @@
 
 function git_upload_pack_capabilities($git_path) {
     $capabilities = array(
+        'multi_ack_detailed',
+        'no-done',
         'side-band-64k',
         'ofs-delta',
+        'thin-pack',
+        'include-tag',
         'agent=php-git-server/1');
 
     $head = resolve_ref($git_path, 'HEAD');
@@ -49,9 +53,17 @@ function git_upload_pack_advertise_native($repository) {
 function git_upload_pack_parse_request($input) {
     $request = array('wants' => array(), 'haves' => array(), 'capabilities' => array());
     $first_want = TRUE;
+    $want_phase_done = FALSE;
+    $complete = FALSE;
 
     while (($packet = git_protocol_read_packet($input)) !== FALSE) {
         if ($packet['type'] === 'flush') {
+            if ($want_phase_done && !empty($request['haves'])
+                && isset($request['capabilities']['no-done'])) {
+                $complete = TRUE;
+                break;
+            }
+            $want_phase_done = TRUE;
             continue;
         }
         if ($packet['type'] !== 'data') {
@@ -70,13 +82,14 @@ function git_upload_pack_parse_request($input) {
         } else if (preg_match('~^have ([0-9a-f]{40})$~D', $line, $matches)) {
             $request['haves'][] = $matches[1];
         } else if ($line === 'done') {
+            $complete = TRUE;
             break;
         } else {
             return FALSE;
         }
     }
 
-    if ($packet === FALSE || empty($request['wants'])) {
+    if (!$complete || empty($request['wants'])) {
         return FALSE;
     }
     return $request;
@@ -121,6 +134,21 @@ function git_upload_pack_rpc_native($repository, $input) {
     if ($objects === FALSE) {
         return FALSE;
     }
+    if (isset($request['capabilities']['include-tag'])) {
+        foreach (get_repository_refs($repository['path']) as $ref) {
+            if (strpos($ref[0], 'refs/tags/') !== 0) {
+                continue;
+            }
+            $tag = git_object_store_read($store, $ref[1]);
+            if ($tag === FALSE || $tag['type'] !== 'tag') {
+                continue;
+            }
+            $links = git_object_store_links($tag);
+            if ($links !== FALSE && isset($objects[$links[0]])) {
+                $objects[$tag['oid']] = $tag;
+            }
+        }
+    }
 
     $last_common = NULL;
     foreach ($request['haves'] as $have) {
@@ -139,8 +167,14 @@ function git_upload_pack_rpc_native($repository, $input) {
         return FALSE;
     }
 
-    echo git_protocol_format_packet(
-        $last_common === NULL ? "NAK\n" : 'ACK '.$last_common."\n");
+    if ($last_common === NULL) {
+        echo git_protocol_format_packet("NAK\n");
+    } else if (isset($request['capabilities']['multi_ack_detailed'])) {
+        echo git_protocol_format_packet('ACK '.$last_common." common\n");
+        echo git_protocol_format_packet('ACK '.$last_common." ready\n");
+    } else {
+        echo git_protocol_format_packet('ACK '.$last_common."\n");
+    }
     if (isset($request['capabilities']['side-band-64k'])) {
         git_upload_pack_send_sideband(1, $pack);
         echo '0000';
