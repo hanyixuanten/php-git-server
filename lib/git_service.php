@@ -40,6 +40,38 @@ function git_service_write_repository_file($path, $contents) {
     return @file_put_contents($path, $contents, LOCK_EX) === strlen($contents);
 }
 
+/* A newly-created repository starts with an unborn main branch. If the first
+   push creates a differently named branch, make that branch the default. */
+function git_service_update_unborn_head($git_path, $updated_refs) {
+    $head = resolve_ref($git_path, 'HEAD');
+    if ($head[1] !== NULL) {
+        return TRUE;
+    }
+
+    $head_path = get_safe_file_path($git_path, '/HEAD');
+    $contents = $head_path === FALSE ? FALSE : @file_get_contents($head_path);
+    if ($contents === FALSE
+        || !preg_match('~^ref:\s*(refs/heads/[^\r\n]+)\s*$~', $contents)) {
+        return TRUE;
+    }
+
+    $branch = NULL;
+    foreach ($updated_refs as $ref) {
+        $resolved = resolve_ref($git_path, $ref);
+        if (strpos($ref, 'refs/heads/') === 0 && $resolved[1] !== NULL) {
+            $branch = $ref;
+            break;
+        }
+    }
+    if ($branch === NULL) {
+        return TRUE;
+    }
+
+    $new_contents = "ref: ".$branch."\n";
+    return @file_put_contents($git_path.'/HEAD', $new_contents, LOCK_EX)
+        === strlen($new_contents);
+}
+
 function git_service_init_bare_repository_with_php($path) {
     $directories = array(
         '',
@@ -482,9 +514,10 @@ function git_service_rpc($application, $repository, $request, $service, $input) 
         && $service === 'git-receive-pack') {
         if (!git_receive_pack_rpc_native($repository, $input)) {
             error_log('Native Git receive-pack failed for '.$repository['url'].'.');
+            return 1;
         }
-        return;
+        return 0;
     }
 
-    git_service_run($application, $repository, $request, $service, FALSE, $input);
+    return git_service_run($application, $repository, $request, $service, FALSE, $input);
 }

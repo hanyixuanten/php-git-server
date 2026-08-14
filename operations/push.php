@@ -231,6 +231,11 @@ function push_run_receive_pack($repository, $request, $application) {
         send_error(403, 'Forbidden', $validation);
     }
 
-    git_service_rpc($application, $repository, $request, 'git-receive-pack', $input);
+    $exit_code = git_service_rpc(
+        $application, $repository, $request, 'git-receive-pack', $input);
+    if ($exit_code === 0
+        && !git_service_update_unborn_head($repository['path'], $updates)) {
+        error_log('Unable to update unborn HEAD for '.$repository['url'].'.');
+    }
     fclose($input);
 }
