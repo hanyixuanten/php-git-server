@@ -2,12 +2,12 @@
 
 本项目通过 PHP 发布显式配置的 Git 仓库，同时支持 **Dumb HTTP** 与 **Smart HTTP**：
 
-- `clone`：支持 Smart HTTP；服务器没有 Git/`proc_open` 时由 PHP 原生 upload-pack 提供，也保留 Dumb HTTP 兼容路径。
-- `pull` / `fetch`：通过 `git-upload-pack --stateless-rpc` 提供。
-- `push`：有 Git 时通过 `git-receive-pack --stateless-rpc` 提供；无 Git 时由 PHP 原生 receive-pack 提供，默认关闭。
+- `clone`：由 PHP 实现 Smart HTTP upload-pack，并保留 Dumb HTTP 兼容路径。
+- `pull` / `fetch`：由 PHP 实现的 upload-pack 提供。
+- `push`：由 PHP 实现的 receive-pack 提供，默认关闭。
 - `branch`：远程分支以 `refs/heads/*` 表示，可通过 push 创建、更新和删除。
 - `tag`：远程标签以 `refs/tags/*` 表示，可通过 push 创建、更新和删除。
-- `create`：可从主界面创建受控目录内的 bare 仓库；Git 不可用时由 PHP 直接初始化。
+- `create`：可从主界面创建受控目录内的 bare 仓库，由 PHP 直接初始化。
 
 Git 协议不会向服务器发送名为“branch”或“tag”的独立命令：本地 `git branch`、`git tag` 不访问服务器；远程分支和标签通过 fetch/pull 获取，通过 push 更新。
 
@@ -21,7 +21,7 @@ lib/http.php              HTTP 状态、响应头和认证用户读取
 lib/auth.php              MySQL 用户、网页登录会话与 Access Token 验证
 lib/repository.php        仓库配置、安全路径和 Dumb HTTP refs
 lib/router.php            请求路由
-lib/git_service.php       Smart HTTP Git 子进程与流式传输
+lib/git_service.php       Smart HTTP 服务分发与 bare 仓库初始化
 operations/clone.php      Dumb HTTP clone/object 资源
 operations/pull.php       upload-pack：clone/fetch/pull
 operations/push.php       receive-pack：push 请求、大小及 refs 校验
@@ -38,14 +38,14 @@ operations/tag.php        refs/tags/* 标签更新规则
 - MySQL 5.7+/MariaDB 10.2+ 与 PHP PDO MySQL 扩展（`pdo_mysql`）。
 - Apache `mod_rewrite` 模块。
 - 允许项目目录中的 `.htaccess` 使用重写规则。
-- Smart HTTP 需要服务器安装 Git，并允许 PHP 使用 `proc_open`。
+- Smart HTTP 需要 PHP zlib 与 hash 扩展。
 - Web 服务器进程对仓库具有读取权限；启用 push 时还需要写入权限。
 
 项目没有 Composer 依赖，也不需要构建。若系统尚未启用 PDO MySQL，先安装对应 PHP 扩展并重启 Apache/PHP-FPM。
 
-服务器可以不安装 Git。Git 或 `proc_open` 不可用时，应用使用纯 PHP 实现的 Smart HTTP 服务端协议，支持普通 SHA-1 仓库的 clone、fetch、pull、push、delta、分支和标签；PHP 必须启用 zlib 与 hash 扩展。
+服务器不需要安装 Git。应用使用纯 PHP 实现的 Smart HTTP 服务端协议，支持普通 SHA-1 仓库的 clone、fetch、pull、push、delta、分支和标签。
 
-原生 PHP 后端当前不支持 SHA-256 仓库、shallow clone、partial clone/filter、push certificate、Git hooks 和仅 protocol v2 提供的功能。需要这些能力时仍应安装 Git 并允许 `proc_open`。
+PHP 后端当前不支持 SHA-256 仓库、shallow clone、partial clone/filter、push certificate、Git hooks 和仅 protocol v2 提供的功能。
 
 ## 3. 安装
 
@@ -109,7 +109,6 @@ https://git.example.com/php-git-server/
 <?php
 
 $url_base = '/php-git-server';
-$git_executable = 'git';
 
 $auth = array(
     'enabled' => TRUE,
@@ -191,7 +190,7 @@ $managed_repositories = array(
 - 设置 `$managed_repositories = array();` 可完全关闭主界面创建功能。
 - 仓库名称仅允许字母、数字、点、短横线和下划线，长度最多 64 个字符；`.git` 后缀可省略。
 - 新仓库是 bare 仓库，默认分支为 `main`。应用内的创建请求使用锁、暂存目录和原子改名，不会互相覆盖；托管目录不应由其他进程同时写入。
-- Git 或 `proc_open` 不可用时，应用以纯 PHP 创建标准 SHA-1 格式的空 bare 仓库；之后可以通过 Dumb HTTP clone，但首次写入仍需在其他具备 Git 的环境中生成仓库内容并同步到服务器。
+- 应用以纯 PHP 创建标准 SHA-1 格式的空 bare 仓库，可以直接通过 Smart HTTP 完成首次 push。
 
 静态 `$repos` 条目与托管目录中的仓库 URL 冲突时，以静态条目为准。仓库创建要求已登录 Session，所有修改表单还使用会话 CSRF 令牌。托管仓库的所有者和可见性保存在 `pgit_repositories`；缺少元数据的旧托管仓库按私有、无所有者处理，在完成迁移前不可 push。
 
@@ -215,7 +214,7 @@ $managed_repositories = array(
 
 所有 push 都必须提供 access token，且 token 所属用户名必须与 `owner` 完全一致。`branches`、`tags` 和 `other_refs` 只控制 push 更新，不会隐藏已经存在的 refs。私有仓库的 Smart HTTP 与 Dumb HTTP 路径都会先验证 token，私有对象响应禁止共享缓存。
 
-push 请求会先写入系统临时目录，以便在交给 `git-receive-pack` 前检查 ref 命名空间。启用较大的 push 时，应保证 PHP 系统临时目录具有足够空间；也可以使用 `max_request_bytes` 设置上限。
+push 请求会先写入系统临时目录，以便 PHP 在处理对象前检查 ref 命名空间。启用较大的 push 时，应保证 PHP 系统临时目录具有足够空间；也可以使用 `max_request_bytes` 设置上限。
 
 ## 6. 身份认证
 
@@ -270,7 +269,7 @@ git push origin main
 
 Git 收到私有读取或 push 的 `401` 响应后会提示输入用户名和密码。也可以使用操作系统的 Git Credential Manager 或其他安全凭据助手保存 token；不要把 token 写入远程 URL、shell 历史、仓库配置或脚本。
 
-公开仓库允许匿名 clone/fetch/pull；私有仓库只接受 access token。浏览器登录 Session 只用于首页、创建仓库和显示私有仓库列表，不能代替 Git access token。Token 验证成功后，用户名会作为 `REMOTE_USER` 传给 Git 子进程和 hooks，现有 hooks 可以继续读取该变量。
+公开仓库允许匿名 clone/fetch/pull；私有仓库只接受 access token。浏览器登录 Session 只用于首页、创建仓库和显示私有仓库列表，不能代替 Git access token。Token 验证成功后，应用使用该用户名执行仓库所有者权限检查。
 
 ### 现有数据库与仓库迁移
 
@@ -315,7 +314,7 @@ sudo find /var/www/php-git-server/repos/project.git -type f -exec chmod 660 {} \
 
 权限策略应根据服务器实际用户、组和备份方案调整。不要使用 `chmod -R 777`。
 
-仓库中的 hooks 会在 `git-receive-pack` 处理 push 时以 PHP/Web 服务器用户身份执行。只能发布受信任的仓库和 hooks，并确保 hooks 不接受未经校验的外部参数去执行任意命令。
+PHP 服务端不会执行仓库中的 Git hooks。
 
 ## 8. 操作示例
 
@@ -402,8 +401,8 @@ Smart HTTP 支持：
 - `POST /git-upload-pack`
 - `GET /info/refs?service=git-receive-pack`
 - `POST /git-receive-pack`
-- upload-pack 的 Git protocol v0/v1/v2 协商
-- Git 自身支持的 SHA-1 或 SHA-256 仓库格式
+- upload-pack 的 Git protocol v0/v1 基本协商
+- SHA-1 仓库格式
 
 Dumb HTTP 支持：
 
@@ -417,7 +416,7 @@ Dumb HTTP 支持：
 - loose refs、packed refs、packed annotated tag 的 peeled refs
 - SHA-1 和 SHA-256 长度的对象名称
 
-安装 Git 时，Smart HTTP 的具体协商、对象校验、fast-forward 规则和仓库 hooks 由服务器 Git 负责。无 Git 时，PHP 后端执行 SHA-1 对象哈希、pack 校验、OFS/REF delta、对象连通性、ref 锁和默认 fast-forward 检查，但不会执行 hooks。
+PHP 后端执行 SHA-1 对象哈希、pack 校验、OFS/REF delta、对象连通性、ref 锁和默认 fast-forward 检查，但不会执行 hooks。
 
 ## 10. 验证部署
 
@@ -480,14 +479,7 @@ curl -i -X POST https://git.example.com/php-git-server/project.git/HEAD
 
 ### clone / pull 返回 503
 
-检查：
-
-1. `$git_executable` 是否指向可执行的 Git。
-2. Web 服务器进程的 `PATH` 是否包含 Git。
-3. PHP 是否允许 `proc_open`。
-4. Web 服务器进程是否可读取仓库。
-
-若 Git 不可用，服务使用原生 PHP Smart HTTP 后端。确认 PHP 启用了 zlib 与 hash，并确认仓库是 SHA-1 格式；浅克隆、filter、SHA-256 或 hooks 需求必须改用 Git 后端。
+检查 PHP 是否启用了 zlib 与 hash、仓库是否为 SHA-1 格式，以及 Web 服务器进程是否可读取仓库。当前服务不支持浅克隆、filter、SHA-256 或 hooks。
 
 ### push 返回 403
 
@@ -519,7 +511,7 @@ curl -i -X POST https://git.example.com/php-git-server/project.git/HEAD
 
 ### push 返回 500 或远端断开
 
-检查 PHP/Apache 错误日志、Git hooks 输出、仓库写权限、磁盘空间和临时目录空间。还应确认 `max_request_bytes` 没有设置得过小。
+检查 PHP/Apache 错误日志、仓库写权限、磁盘空间和临时目录空间。还应确认 `max_request_bytes` 没有设置得过小。
 
 ### non-fast-forward 被拒绝
 
@@ -529,7 +521,7 @@ curl -i -X POST https://git.example.com/php-git-server/project.git/HEAD
 git push --force-with-lease origin main
 ```
 
-仓库本地配置和 hooks 仍可进一步禁止 force push、删除或特定提交。
+应用的仓库选项还可禁止 force push、删除或特定 ref 命名空间。
 
 ### 浏览器可以访问，但 Git 操作失败
 
@@ -554,6 +546,5 @@ GIT_TRACE=1 GIT_CURL_VERBOSE=1 git clone \
 - 只给 Web 服务器最小必要的文件权限。
 - 将 `other_refs` 保持为 `FALSE`，除非确实需要 notes、replace 或自定义 refs。
 - 使用 `max_request_bytes`、Web 服务器请求体限制和磁盘配额防止超大 push。
-- 审查仓库 hooks；push 会执行 receive-pack hooks。
 - 不提交 `config.php`，也不要把敏感信息写入 Git 历史。
 - 确保 `.htaccess` 或等价的虚拟主机规则生效，避免绕过 `index.php`。

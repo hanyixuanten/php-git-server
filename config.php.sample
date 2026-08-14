@@ -6,11 +6,6 @@
 $url_base = '';
 
 
-/* Git executable used by Smart HTTP when available. If it is unavailable,
- * supported SHA-1 Smart HTTP operations run through the native PHP backend. */
-
-$git_executable = 'git';
-
 /* Interface language: 'en', 'zh', or empty to follow the browser. */
 $language = '';
 

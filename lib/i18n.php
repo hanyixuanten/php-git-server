@@ -221,8 +221,6 @@ function i18n_catalog_en() {
             .' shortly.',
         'notice.repository_root_unavailable' => 'The repository directory is unavailable or'
             .' not writable.',
-        'notice.repository_git_unavailable' => 'The Git initialization service is unavailable'
-            .' right now.',
         'notice.repository_metadata_unsaved' => 'Repository ownership could not be saved.'
             .' Try again shortly.',
         'notice.repository_create_failed' => 'Repository creation failed. Check the server'
@@ -332,9 +330,6 @@ function i18n_catalog_en() {
         'install.legend_application' => 'Application',
         'install.label_url_base' => 'Base path',
         'install.hint_url_base' => 'Leave empty when deploying at the domain root.',
-        'install.label_git_executable' => 'Git executable',
-        'install.hint_git_executable' => 'Falls back to the pure PHP implementation when'
-            .' unavailable.',
         'install.label_language' => 'Interface language',
         'install.language_auto' => 'Follow the browser (English fallback)',
         'install.language_en' => 'English',
@@ -369,7 +364,6 @@ function i18n_catalog_en() {
 
         'install.error_url_base' => 'The base path must start with / and must not end with'
             .' /. Leave it empty when deploying at the domain root.',
-        'install.error_git_executable' => 'The Git executable path is not valid.',
         'install.error_db_host' => 'The database host name is not valid.',
         'install.error_db_port' => 'The database port is not valid.',
         'install.error_db_name' => 'A database name may contain only letters, digits,'
@@ -559,7 +553,6 @@ function i18n_catalog_zh() {
         'notice.repository_exists' => '仓库 {name} 已存在。',
         'notice.repository_create_busy' => '另一个仓库正在创建，请稍后重试。',
         'notice.repository_root_unavailable' => '仓库存放目录不可用或不可写。',
-        'notice.repository_git_unavailable' => 'Git 初始化服务当前不可用。',
         'notice.repository_metadata_unsaved' => '仓库所有权信息无法保存，请稍后重试。',
         'notice.repository_create_failed' => '仓库创建失败，请检查服务器日志。',
         'notice.repository_created' => '仓库 {name} 已创建。',
@@ -646,8 +639,6 @@ function i18n_catalog_zh() {
         'install.legend_application' => '应用',
         'install.label_url_base' => '基础路径',
         'install.hint_url_base' => '部署在域名根路径时留空。',
-        'install.label_git_executable' => 'Git 可执行文件',
-        'install.hint_git_executable' => '不可用时会回退到纯 PHP 实现。',
         'install.label_language' => '界面语言',
         'install.language_auto' => '跟随浏览器（默认英语）',
         'install.language_en' => 'English',
@@ -676,7 +667,6 @@ function i18n_catalog_zh() {
         'install.button_submit' => '开始安装',
 
         'install.error_url_base' => '基础路径必须以 / 开头，且不能以 / 结尾；部署在域名根路径时请留空。',
-        'install.error_git_executable' => 'Git 可执行文件路径无效。',
         'install.error_db_host' => '数据库主机名无效。',
         'install.error_db_port' => '数据库端口无效。',
         'install.error_db_name' => '数据库名只能包含字母、数字、下划线和短横线，最多 64 个字符。',

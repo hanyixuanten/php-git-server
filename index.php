@@ -242,7 +242,6 @@ function home_creation_result_notice($result) {
         case 'already_exists':      return array(409, 'error', t('notice.repository_exists', array('name' => $name)));
         case 'create_busy':         return array(409, 'error', t('notice.repository_create_busy'));
         case 'root_unavailable':    return array(503, 'error', t('notice.repository_root_unavailable'));
-        case 'git_unavailable':     return array(503, 'error', t('notice.repository_git_unavailable'));
         case 'metadata_unavailable': return array(503, 'error', t('notice.repository_metadata_unsaved'));
         default:                    return array(500, 'error', t('notice.repository_create_failed'));
     }
@@ -297,7 +296,6 @@ function home_create_repository(
         $result = array('status' => 'already_exists', 'name' => $name);
     } else {
         $result = git_service_create_managed_repository(
-            $application,
             $configuration,
             $value,
             $owner['id'],
@@ -918,9 +916,6 @@ if (!isset($repos) || !is_array($repos)) {
     send_error(500, 'Internal Server Error', 'The repository configuration is invalid.');
 }
 
-if (!isset($git_executable)) {
-    $git_executable = 'git';
-}
 
 if (!isset($auth)) {
     $auth = array();
@@ -938,9 +933,7 @@ if (!is_array($managed_repositories)) {
     send_error(500, 'Internal Server Error', 'The managed repository configuration is invalid.');
 }
 
-$application = array(
-    'git_executable' => $git_executable,
-    'push_ref_rules' => array());
+$application = array('push_ref_rules' => array());
 $services = array();
 
 register_branch_operation($application);

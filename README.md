@@ -21,7 +21,7 @@ This project serves configured Git repositories through PHP. It supports:
 `index.php` is the application entry point. Protocol responsibilities are split
 into `operations/clone.php`, `operations/pull.php`, `operations/push.php`,
 `operations/branch.php` and `operations/tag.php`; shared routing, repository,
-HTTP and Git process code is under `lib/`.
+HTTP and pure-PHP Git protocol code is under `lib/`.
 
 Requirements
 ------------
@@ -30,23 +30,21 @@ Requirements
 - Apache with `mod_rewrite` and `.htaccess` enabled for normal deployment.
 - MySQL 5.7+/MariaDB 10.2+ and PHP PDO MySQL (`pdo_mysql`) when account
     authentication is enabled.
-- PHP zlib and hash extensions for the native Git protocol implementation.
-- Git and PHP `proc_open` are optional; when available, Git remains the Smart
-    HTTP backend for full protocol and hook compatibility.
+- PHP zlib and hash extensions are required for the Smart HTTP implementation.
 - Read access to published repositories; write access is also required for push
     and for the managed repository directory when home-page creation is enabled.
 
-If Git or `proc_open` is unavailable, the native PHP backend supports ordinary
-SHA-1 clone, fetch, pull and push, including deltas, branches and tags. It does
-not currently support SHA-256 repositories, shallow or filtered fetches, signed
-push certificates, Git hooks or protocol v2-only features.
+The pure-PHP backend supports ordinary SHA-1 clone, fetch, pull and push,
+including deltas, branches and tags. It does not currently support SHA-256
+repositories, shallow or filtered fetches, signed push certificates, Git hooks
+or protocol v2-only features.
 Push is disabled by default and should be enabled only behind HTTPS.
 
 Configuration
 -------------
 
 Copy `config.php.sample` to `config.php`, import `schema.mysql.sql`, then
-configure `$url_base`, `$git_executable`, `$auth`, `$repos` and optionally
+configure `$url_base`, `$auth`, `$repos` and optionally
 `$managed_repositories`. A writable repository can be configured as:
 
 ```php
