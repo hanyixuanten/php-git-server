@@ -72,6 +72,29 @@ test_case('upload-pack ACKs a common commit and excludes its history', function 
     }
 });
 
+test_case('upload-pack sends a final ACK after done with detailed negotiation', function () {
+    $fixture = git_fixture_create();
+    try {
+        $history = git_fixture_history($fixture, array('one', 'two'));
+        git_fixture_write_ref($fixture, 'refs/heads/main', $history[1]);
+        $request = git_protocol_format_packet(
+            'want '.$history[1]." multi_ack_detailed side-band-64k\n").'0000'
+            .git_protocol_format_packet('have '.$history[0]."\n")
+            .git_protocol_format_packet("done\n");
+        $input = test_stream($request);
+        $output = test_capture_output(function () use ($fixture, $input) {
+            return git_upload_pack_rpc_native(git_fixture_repository($fixture), $input);
+        });
+        fclose($input);
+
+        $ack = git_protocol_format_packet('ACK '.$history[0]."\n");
+        test_assert_same($ack, substr($output, 0, strlen($ack)));
+        test_assert_same(chr(1).'PACK', substr($output, strlen($ack) + 4, 5));
+    } finally {
+        test_remove_directory($fixture);
+    }
+});
+
 test_case('upload-pack rejects an unadvertised want', function () {
     $fixture = git_fixture_create();
     try {
@@ -111,9 +134,13 @@ test_case('upload-pack reports detailed common and ready acknowledgments', funct
         });
         fclose($input);
 
-        test_assert_contains('ACK '.$history[0]." common\n", $output);
-        test_assert_contains('ACK '.$history[0]." ready\n", $output);
-        test_assert_contains('PACK', $output);
+        $common = git_protocol_format_packet('ACK '.$history[0]." common\n");
+        $ready = git_protocol_format_packet('ACK '.$history[0]." ready\n");
+        $nak = git_protocol_format_packet("NAK\n");
+        $ack = git_protocol_format_packet('ACK '.$history[0]."\n");
+        $prefix = $common.$ready.$nak.$ack;
+        test_assert_same($prefix, substr($output, 0, strlen($prefix)));
+        test_assert_same('PACK', substr($output, strlen($prefix), 4));
     } finally {
         test_remove_directory($fixture);
     }

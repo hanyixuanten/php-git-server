@@ -51,7 +51,11 @@ function git_upload_pack_advertise_native($repository) {
 }
 
 function git_upload_pack_parse_request($input) {
-    $request = array('wants' => array(), 'haves' => array(), 'capabilities' => array());
+    $request = array(
+        'wants' => array(),
+        'haves' => array(),
+        'capabilities' => array(),
+        'done' => FALSE);
     $first_want = TRUE;
     $want_phase_done = FALSE;
     $complete = FALSE;
@@ -82,6 +86,7 @@ function git_upload_pack_parse_request($input) {
         } else if (preg_match('~^have ([0-9a-f]{40})$~D', $line, $matches)) {
             $request['haves'][] = $matches[1];
         } else if ($line === 'done') {
+            $request['done'] = TRUE;
             $complete = TRUE;
             break;
         } else {
@@ -169,9 +174,11 @@ function git_upload_pack_rpc_native($repository, $input) {
 
     if ($last_common === NULL) {
         echo git_protocol_format_packet("NAK\n");
-    } else if (isset($request['capabilities']['multi_ack_detailed'])) {
+    } else if (isset($request['capabilities']['multi_ack_detailed']) && !$request['done']) {
         echo git_protocol_format_packet('ACK '.$last_common." common\n");
         echo git_protocol_format_packet('ACK '.$last_common." ready\n");
+        echo git_protocol_format_packet("NAK\n");
+        echo git_protocol_format_packet('ACK '.$last_common."\n");
     } else {
         echo git_protocol_format_packet('ACK '.$last_common."\n");
     }
